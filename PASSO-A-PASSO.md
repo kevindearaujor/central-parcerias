@@ -1,4 +1,4 @@
-# Central de Parcerias · Passo a passo
+# Quero Leads · Passo a passo
 
 Painel no navegador que espelha o WhatsApp do número de trabalho para a equipe de corretores. Os clientes que clicam no anúncio chegam aqui na hora, com a origem do anúncio identificada, e cada corretor atende pelo próprio login.
 

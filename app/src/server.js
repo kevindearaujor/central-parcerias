@@ -265,7 +265,7 @@ route('POST', '/api/push/unsubscribe', async (req, res) => {
   send(res, 200, { ok: true });
 });
 route('POST', '/api/push/test', async (req, res, { user }) => {
-  push.notifyUsers([user.id], { title: 'Central de Parcerias', body: 'Pronto! Os avisos de lead novo vão chegar assim.', tag: 'teste', url: '/' });
+  push.notifyUsers([user.id], { title: 'Quero Leads', body: 'Pronto! Os avisos de lead novo vão chegar assim.', tag: 'teste', url: '/' });
   send(res, 200, { ok: true, devices: push.countFor(user.id) });
 });
 

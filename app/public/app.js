@@ -1,4 +1,4 @@
-/* Central de Parcerias — painel de atendimento via WhatsApp
+/* Quero Leads — painel de atendimento via WhatsApp
    Funciona em dois modos: real (servidor + Evolution API) ou demonstração (dados de exemplo). */
 (function () {
   'use strict';
@@ -209,7 +209,7 @@
   }
   function updateTitle() {
     let n = 0; for (const c of S.chats.values()) if (c.unread > 0 && !isOut(c)) n++;
-    document.title = (n ? `(${n}) ` : '') + 'Central de Parcerias';
+    document.title = (n ? `(${n}) ` : '') + 'Quero Leads';
     const dot = $('#rail-unread'); if (dot) { dot.hidden = !n; dot.textContent = n > 99 ? '99+' : n; }
   }
 
@@ -346,7 +346,7 @@
     document.getElementById('root').innerHTML = `
       <div class="login">
         <form class="login-card" id="login-form">
-          <div class="brand"><div class="brand-mark">${I.logo}</div>Central de Parcerias</div>
+          <div class="brand"><div class="brand-mark">${I.logo}</div>Quero Leads</div>
           <p>Entre com o usuário e a senha que o administrador cadastrou para você.</p>
           <div class="field"><label for="lg-email">Usuário</label><input class="input" id="lg-email" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></div>
           <div class="field"><label for="lg-pass">Senha</label><input class="input" id="lg-pass" type="password" autocomplete="current-password" required></div>
@@ -370,7 +370,7 @@
     document.getElementById('root').innerHTML = `
       <div class="app">
         <nav class="rail" aria-label="Navegação">
-          <div class="brand-mark" title="Central de Parcerias">${I.logo}</div>
+          <div class="brand-mark" title="Quero Leads">${I.logo}</div>
           <button class="rail-btn" data-view="inbox" aria-label="Conversas">${I.chat}<span class="dot" id="rail-unread" hidden></span><span class="tip">Conversas</span></button>
           <button class="rail-btn" data-view="funil" aria-label="Funil">${I.board}<span class="tip">Funil de leads</span></button>
           <button class="rail-btn" data-view="painel" aria-label="Painel">${I.chart}<span class="tip">Painel</span></button>
