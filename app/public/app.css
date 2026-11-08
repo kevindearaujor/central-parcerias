@@ -317,6 +317,10 @@ table.t td:first-child { white-space: nowrap; }
 .wa-warn { background: var(--danger-soft); color: var(--danger); padding: 8px 14px; font-size: 13px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 
 /* ---------- telas menores ---------- */
+@media (min-width: 1181px) {
+  .inbox.hide-detail { grid-template-columns: 340px minmax(0, 1fr); }
+  .inbox.hide-detail .detail-pane { display: none; }
+}
 @media (max-width: 1180px) {
   .inbox { grid-template-columns: 300px minmax(0, 1fr); }
   .inbox .detail-pane { position: fixed; top: 0; right: 0; bottom: 0; width: min(340px, 100%); z-index: 40; box-shadow: var(--shadow); padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }

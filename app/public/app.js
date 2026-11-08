@@ -312,7 +312,7 @@
   // ================= conversas =================
   function renderInbox() {
     $('#view').innerHTML = `
-      <div class="inbox" id="inbox">
+      <div class="inbox ${store.get('hideDetail', false) ? 'hide-detail' : ''}" id="inbox">
         <section class="list-pane">
           <div id="wa-warn"></div>
           <div class="list-head">
@@ -460,7 +460,7 @@
         <button class="icon-btn" id="info-btn" aria-label="Ficha do lead" title="Ficha do lead">${I.info}</button>
       </div>`;
     $('#back-btn').onclick = closeChat;
-    $('#info-btn').onclick = () => { $('#inbox').classList.toggle('show-detail'); };
+    $('#info-btn').onclick = () => toggleDetail();
     $('#head-stage').onchange = e => {
       const v = e.target.value;
       if (v === 'perdido' || v === 'arquivado') { renderChatHead(); confirmOut(c, v); }
@@ -603,6 +603,16 @@
   }
 
   // ---------- ficha do lead ----------
+  // Ficha do lead: na tela larga fica fixa ao lado (e o X esconde); na estreita abre por cima
+  function toggleDetail(show) {
+    const ib = $('#inbox'); if (!ib) return;
+    if (window.matchMedia('(min-width: 1181px)').matches) {
+      const hide = show === undefined ? !ib.classList.contains('hide-detail') : !show;
+      ib.classList.toggle('hide-detail', hide); store.set('hideDetail', hide);
+    } else {
+      ib.classList.toggle('show-detail', show === undefined ? !ib.classList.contains('show-detail') : show);
+    }
+  }
   function renderDetail() {
     const el = $('#detail-pane'); if (!el) return;
     const c = S.chats.get(S.current);
@@ -631,7 +641,7 @@
           <dt>Mensagens do cliente</dt><dd class="num">${msgsIn}</dd>
         </dl>
       </div>`;
-    $('#close-detail').onclick = () => $('#inbox').classList.remove('show-detail');
+    $('#close-detail').onclick = () => toggleDetail(false);
     $('#rename').onclick = () => renameModal(c);
     el.querySelectorAll('[data-tag]').forEach(b => b.onclick = () => {
       const id = Number(b.dataset.tag); const set = new Set(c.tags); set.has(id) ? set.delete(id) : set.add(id);
