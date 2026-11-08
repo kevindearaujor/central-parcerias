@@ -331,6 +331,13 @@ route('PATCH', '/api/users/:id', async (req, res, { user, params }) => {
     if (String(body.password).length < 6) return fail(res, 400, 'Senha com mínimo de 6 caracteres');
     sets.push('pass = ?'); vals.push(hashPassword(body.password));
   }
+  if (user.role === 'admin' && body.username !== undefined) {
+    const login = String(body.username).toLowerCase().trim();
+    if (!login.includes('@') && !/^[a-z0-9._-]{3,30}$/.test(login)) return fail(res, 400, 'Usuário deve ter de 3 a 30 caracteres, só letras minúsculas, números, ponto, hífen ou sublinhado, sem espaços nem acentos');
+    const other = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(login, id);
+    if (other) return fail(res, 400, 'Esse usuário já existe. Escolha outro.');
+    sets.push('email = ?'); vals.push(login);
+  }
   if (user.role === 'admin') {
     if (body.role && id !== user.id) { sets.push('role = ?'); vals.push(body.role === 'admin' ? 'admin' : 'corretor'); }
     if (body.active !== undefined && id !== user.id) { sets.push('active = ?'); vals.push(body.active ? 1 : 0); }

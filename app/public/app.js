@@ -1070,6 +1070,27 @@
       <div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="lo-ok" style="background:var(--danger);border-color:var(--danger);color:#fff">Desconectar</button></div>`,
       (bg, close) => bg.querySelector('#lo-ok').onclick = async () => { try { S.waFull = await A.post('/api/wa/logout'); close(); renderWaBox(); renderWaWarn(); } catch (e) { toast(e.message, true); } });
   }
+  function editUserModal(u) {
+    if (!u) return;
+    const self = u.id === S.me.id;
+    modal(`<h3>Editar ${esc(u.name)}</h3>
+      <div class="field"><label for="eu-name">Nome</label><input class="input" id="eu-name" value="${esc(u.name)}"></div>
+      <div class="field"><label for="eu-user">${u.email.includes('@') ? 'Login (usuário ou e-mail)' : 'Usuário'}</label><input class="input" id="eu-user" value="${esc(u.email)}" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
+      ${self ? '' : `<div class="field"><label for="eu-role">Tipo de acesso</label><select class="input" id="eu-role"><option value="corretor" ${u.role === 'corretor' ? 'selected' : ''}>Corretor</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Administrador</option></select></div>`}
+      <div class="field"><label for="eu-pass">Nova senha (deixe em branco para manter)</label><input class="input" id="eu-pass" type="text" autocomplete="off" placeholder="Mínimo 6 caracteres"></div>
+      <div class="form-error" id="eu-err"></div>
+      <div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="eu-ok">Salvar</button></div>`,
+    (bg, close) => bg.querySelector('#eu-ok').onclick = async () => {
+      const body = { name: bg.querySelector('#eu-name').value.trim() };
+      const login = bg.querySelector('#eu-user').value.trim().toLowerCase();
+      if (login !== u.email) body.username = login;
+      const role = bg.querySelector('#eu-role'); if (role && role.value !== u.role) body.role = role.value;
+      const pw = bg.querySelector('#eu-pass').value; if (pw) body.password = pw;
+      if (!body.name) { bg.querySelector('#eu-err').textContent = 'O nome não pode ficar vazio'; return; }
+      try { await A.patch(`/api/users/${u.id}`, body); close(); await reloadBootstrap(); renderConfig(); toast('Dados salvos'); }
+      catch (err) { bg.querySelector('#eu-err').textContent = err.message; }
+    });
+  }
   function deleteUserModal(u) {
     if (!u) return;
     const n = [...S.chats.values()].filter(c => c.assigned_to === u.id).length;
@@ -1095,10 +1116,12 @@
     ul.innerHTML = S.users.filter(u => !u.deleted).map(u => `<div class="row-item"><div class="avatar sm" style="background:${colorFor('u' + u.id)}">${esc(initials(u.name))}</div>
       <div class="grow"><strong>${esc(u.name)}</strong><small>${esc(u.email)}</small></div>
       <span class="pill ${u.role === 'admin' ? 'admin' : ''} ${u.active ? '' : 'off'}">${u.active ? (u.role === 'admin' ? 'Admin' : 'Corretor') : 'Inativo'}</span>
-      ${u.id !== S.me.id ? `<button class="btn sm ghost" data-toggle="${u.id}">${u.active ? 'Desativar' : 'Reativar'}</button><button class="btn sm ghost" data-reset="${u.id}">Nova senha</button><button class="icon-btn" data-del="${u.id}" aria-label="Excluir ${esc(u.name)}" title="Excluir">${I.trash}</button>` : ''}</div>`).join('');
+      <button class="btn sm ghost" data-edit="${u.id}">${I.edit}Editar</button>
+      ${u.id !== S.me.id ? `<button class="btn sm ghost" data-toggle="${u.id}">${u.active ? 'Desativar' : 'Reativar'}</button><button class="icon-btn" data-del="${u.id}" aria-label="Excluir ${esc(u.name)}" title="Excluir">${I.trash}</button>` : ''}</div>`).join('');
     ul.onclick = async e => {
       const t = e.target.closest('[data-toggle]'); const r = e.target.closest('[data-reset]'); const d = e.target.closest('[data-del]');
       if (d) return deleteUserModal(userById(Number(d.dataset.del)));
+      const ed = e.target.closest('[data-edit]'); if (ed) return editUserModal(userById(Number(ed.dataset.edit)));
       if (t) { const u = userById(Number(t.dataset.toggle)); try { await A.patch(`/api/users/${u.id}`, { active: !u.active }); await reloadBootstrap(); renderConfig(); } catch (err) { toast(err.message, true); } }
       if (r) modal(`<h3>Nova senha</h3><div class="field"><label for="np">Senha (mínimo 6 caracteres)</label><input class="input" id="np" type="text"></div><div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="np-ok">Salvar</button></div>`,
         (bg, close) => bg.querySelector('#np-ok').onclick = async () => { try { await A.patch(`/api/users/${r.dataset.reset}`, { password: bg.querySelector('#np').value }); close(); toast('Senha alterada'); } catch (err) { toast(err.message, true); } });
@@ -1312,7 +1335,7 @@
         usr.deleted = true; usr.active = false; queue.order = queue.order.filter(x => x !== uid);
         return { moved };
       }
-      if (path.startsWith('/api/users')) { if (method === 'POST') { const nu = { id: users.length + 1, name: body.name, email: body.username || body.email, role: body.role, active: true }; users.push(nu); if (nu.role === 'corretor') queue.order.push(nu.id); return { user: nu }; } const uid = Number(path.split('/').pop()); const usr = users.find(x => x.id === uid); if (usr && body.active !== undefined) usr.active = body.active; return { ok: true }; }
+      if (path.startsWith('/api/users')) { if (method === 'POST') { const nu = { id: users.length + 1, name: body.name, email: body.username || body.email, role: body.role, active: true }; users.push(nu); if (nu.role === 'corretor') queue.order.push(nu.id); return { user: nu }; } const uid = Number(path.split('/').pop()); const usr = users.find(x => x.id === uid); if (usr && body.active !== undefined) usr.active = body.active; if (usr && body.name) usr.name = body.name; if (usr && body.username) { if (users.some(x => x.id !== uid && x.email === body.username)) return err('Esse usuário já existe. Escolha outro.'); usr.email = body.username; } if (usr && body.role) usr.role = body.role; return { ok: true }; }
       if (path.startsWith('/api/tags')) { if (method === 'POST') tags.push({ id: tags.length + 10, name: body.name, color: body.color }); if (method === 'DELETE') { const i = tags.findIndex(t => t.id === Number(path.split('/').pop())); if (i >= 0) tags.splice(i, 1); } return { ok: true }; }
       if (path.startsWith('/api/quick-replies')) { if (method === 'POST') qrs.push({ id: qrs.length + 10, shortcut: body.shortcut, text: body.text }); if (method === 'DELETE') { const i = qrs.findIndex(t => t.id === Number(path.split('/').pop())); if (i >= 0) qrs.splice(i, 1); } return { ok: true }; }
       if (path === '/api/logout' || path === '/api/login') return { ok: true };
