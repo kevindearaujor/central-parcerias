@@ -93,7 +93,8 @@ function serveStatic(req, res, pathname) {
   if (!file.startsWith(PUBLIC_DIR)) return fail(res, 403, 'Proibido');
   fs.readFile(file, (err, buf) => {
     if (err) return fail(res, 404, 'Não encontrado');
-    const fresh = rel === '/index.html' || rel === '/sw.js' || rel === '/manifest.webmanifest';
+    // páginas, scripts e estilos sempre conferem a versão nova (as atualizações aparecem sem limpar o cache)
+    const fresh = !rel.startsWith('/icons/');
     const headers = { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': fresh ? 'no-cache' : 'public, max-age=300' };
     if (rel === '/sw.js') headers['Service-Worker-Allowed'] = '/';
     res.writeHead(200, headers);
