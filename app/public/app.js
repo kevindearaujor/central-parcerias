@@ -346,7 +346,10 @@
     document.getElementById('root').innerHTML = `
       <div class="login">
         <form class="login-card" id="login-form">
-          <div class="brand"><div class="brand-mark">${I.logo}</div>Quero Leads</div>
+          <div class="login-logo" role="img" aria-label="Quero Leads">
+            <svg viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lg-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B7BFF"/><stop offset="1" stop-color="#1F4FD1"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="url(#lg-g)"/><path d="M256 104c-92.8 0-168 63.8-168 142.5 0 44.7 24.3 84.6 62.3 110.7L136 416l78.2-34.6c13.4 2.9 27.4 4.4 41.8 4.4 92.8 0 168-63.8 168-142.5S348.8 104 256 104z" fill="none" stroke="#fff" stroke-width="30" stroke-linejoin="round"/><path d="M190 225h132M190 278h86" stroke="#fff" stroke-width="30" stroke-linecap="round"/></svg>
+            <span>Quero <b>Leads</b></span>
+          </div>
           <p>Entre com o usuário e a senha que o administrador cadastrou para você.</p>
           <div class="field"><label for="lg-email">Usuário</label><input class="input" id="lg-email" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></div>
           <div class="field"><label for="lg-pass">Senha</label><input class="input" id="lg-pass" type="password" autocomplete="current-password" required></div>

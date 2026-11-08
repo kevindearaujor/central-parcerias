@@ -421,3 +421,8 @@ table.t td:first-child { white-space: nowrap; }
 .app-col { display: grid; gap: 10px; align-content: start; }
 .ok-line { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--ok); font-weight: 600; }
 .ok-line svg { width: 18px; height: 18px; }
+
+.login-logo { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
+.login-logo svg { width: 56px; height: 56px; flex: none; }
+.login-logo span { font: 800 34px/1 var(--font-ui); letter-spacing: -0.03em; color: var(--fg); white-space: nowrap; }
+.login-logo b { font-weight: 800; color: var(--accent); }
