@@ -432,3 +432,27 @@ table.t td:first-child { white-space: nowrap; }
 @media (max-width: 760px) { .qr-form { grid-template-columns: 1fr; } }
 #qr-list small { white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .qr-pop span { white-space: pre-line; }
+
+/* ---------- celular: nada passa da largura da tela ---------- */
+.settings { grid-template-columns: minmax(0, 1fr); }
+.settings .panel, .row-list, .row-item { min-width: 0; }
+body { overscroll-behavior-y: contain; }
+@media (max-width: 760px) {
+  .page { overflow-x: hidden; }
+  #users-list .row-item { flex-wrap: wrap; row-gap: 6px; }
+  #users-list .row-item .grow { flex: 1 1 calc(100% - 50px); }
+  #users-list .row-item > .pill { margin-left: 38px; }
+  #users-list .row-item > .btn, #users-list .row-item > .icon-btn { flex: none; }
+  .settings .panel { padding: 14px; }
+}
+/* ---------- puxar para atualizar ---------- */
+.ptr { position: fixed; top: calc(env(safe-area-inset-top, 0px) - 44px); left: 50%; width: 40px; height: 40px; border-radius: 50%; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line-strong); display: grid; place-items: center; box-shadow: var(--shadow); z-index: 70; opacity: 0; transform: translate(-50%, 0); transition: opacity .15s; pointer-events: none; }
+.ptr svg { width: 20px; height: 20px; }
+.ptr.show { opacity: 1; transition: none; }
+.ptr.ready { color: var(--accent); border-color: var(--accent); }
+.ptr.spin svg { animation: ptr-spin .8s linear infinite; }
+@keyframes ptr-spin { to { transform: rotate(-360deg); } }
+/* celular instalado: ocupar a tela inteira (o iPhone às vezes calcula 100% menor que a tela) */
+@supports (height: 100dvh) {
+  html, body, #root, .app { height: 100dvh; }
+}

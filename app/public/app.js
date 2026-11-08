@@ -221,9 +221,50 @@
     renderApp();
     connectEvents();
     setupApp();
+    if (!S._ptr) { S._ptr = true; setupPullToRefresh(); }
     await loadChats();
     goView('inbox');
     openFromUrl(location.href);
+  }
+
+  // ================= puxar para atualizar (celular) =================
+  let refreshing = false;
+  async function refreshCurrent() {
+    if (refreshing) return; refreshing = true;
+    try {
+      await reloadBootstrap(); await loadChats();
+      if (S.view === 'inbox' && S.current) await openChat(S.current, true);
+      else if (S.view !== 'inbox') goView(S.view);
+    } catch {}
+    refreshing = false;
+  }
+  function setupPullToRefresh() {
+    if (!('ontouchstart' in window)) return;
+    const ind = document.createElement('div'); ind.className = 'ptr'; ind.innerHTML = I.undo; document.body.appendChild(ind);
+    const SCROLLERS = '.page, .chat-list, .messages, .detail-pane, .col-body';
+    let startY = 0, dy = 0, active = false, box = null;
+    document.addEventListener('touchstart', e => {
+      if (e.touches.length !== 1 || document.querySelector('.modal-bg')) return;
+      box = e.target.closest(SCROLLERS);
+      active = !box || box.scrollTop <= 0; startY = e.touches[0].clientY; dy = 0;
+    }, { passive: true });
+    document.addEventListener('touchmove', e => {
+      if (!active) return;
+      dy = e.touches[0].clientY - startY;
+      if (dy <= 0 || (box && box.scrollTop > 0)) { ind.style.transform = ''; ind.classList.remove('show', 'ready'); return; }
+      const d = Math.min(dy * 0.5, 80);
+      ind.classList.add('show'); ind.classList.toggle('ready', dy > 120);
+      ind.style.transform = `translate(-50%, ${d}px) rotate(${-d * 4}deg)`;
+    }, { passive: true });
+    document.addEventListener('touchend', async () => {
+      if (!active) return; active = false;
+      if (dy > 120) {
+        ind.classList.add('spin'); ind.style.transform = 'translate(-50%, 56px)';
+        await refreshCurrent();
+        toast('Atualizado');
+      }
+      ind.classList.remove('show', 'ready', 'spin'); ind.style.transform = '';
+    });
   }
 
   // ================= app instalável e avisos =================
@@ -1075,6 +1116,21 @@
       <div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="lo-ok" style="background:var(--danger);border-color:var(--danger);color:#fff">Desconectar</button></div>`,
       (bg, close) => bg.querySelector('#lo-ok').onclick = async () => { try { S.waFull = await A.post('/api/wa/logout'); close(); renderWaBox(); renderWaWarn(); } catch (e) { toast(e.message, true); } });
   }
+  function editQuickReply(r) {
+    if (!r) return;
+    modal(`<h3>Editar resposta rápida</h3>
+      <div class="field"><label for="eq-short">Atalho</label><input class="input" id="eq-short" value="${esc(r.shortcut)}" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
+      <div class="field"><label for="eq-text">Texto da resposta</label><textarea class="input" id="eq-text" rows="8">${esc(r.text)}</textarea></div>
+      <div class="form-error" id="eq-err"></div>
+      <div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="eq-ok">Salvar</button></div>`,
+    (bg, close) => bg.querySelector('#eq-ok').onclick = async () => {
+      const shortcut = bg.querySelector('#eq-short').value.trim().replace(/^\//, '');
+      const text = bg.querySelector('#eq-text').value;
+      if (!shortcut || !text.trim()) { bg.querySelector('#eq-err').textContent = 'Preencha o atalho e o texto'; return; }
+      try { await A.patch(`/api/quick-replies/${r.id}`, { shortcut, text }); close(); await reloadBootstrap(); renderConfig(); toast('Resposta salva'); }
+      catch (err) { bg.querySelector('#eq-err').textContent = err.message; }
+    });
+  }
   function editUserModal(u) {
     if (!u) return;
     const self = u.id === S.me.id;
@@ -1139,8 +1195,11 @@
     $('#tags-list').innerHTML = S.tags.map(t => `<div class="row-item"><span class="chip"><span class="sw" style="background:${esc(t.color)}"></span>${esc(t.name)}</span><span class="grow"></span><button class="icon-btn" data-deltag="${t.id}" aria-label="Excluir etiqueta">${I.trash}</button></div>`).join('');
     $('#tags-list').onclick = async e => { const b = e.target.closest('[data-deltag]'); if (b) { await A.del(`/api/tags/${b.dataset.deltag}`); await reloadBootstrap(); renderConfig(); } };
     $('#tag-form').onsubmit = async e => { e.preventDefault(); await A.post('/api/tags', { name: $('#t-name').value, color: $('#t-color').value }); await reloadBootstrap(); renderConfig(); };
-    $('#qr-list').innerHTML = S.quickReplies.map(r => `<div class="row-item"><div class="grow"><strong class="num">/${esc(r.shortcut)}</strong><small>${esc(r.text)}</small></div><button class="icon-btn" data-delqr="${r.id}" aria-label="Excluir resposta">${I.trash}</button></div>`).join('');
-    $('#qr-list').onclick = async e => { const b = e.target.closest('[data-delqr]'); if (b) { await A.del(`/api/quick-replies/${b.dataset.delqr}`); await reloadBootstrap(); renderConfig(); } };
+    $('#qr-list').innerHTML = S.quickReplies.map(r => `<div class="row-item"><div class="grow"><strong class="num">/${esc(r.shortcut)}</strong><small>${esc(r.text)}</small></div><button class="icon-btn" data-editqr="${r.id}" aria-label="Editar resposta" title="Editar">${I.edit}</button><button class="icon-btn" data-delqr="${r.id}" aria-label="Excluir resposta" title="Excluir">${I.trash}</button></div>`).join('');
+    $('#qr-list').onclick = async e => {
+      const ed = e.target.closest('[data-editqr]'); if (ed) return editQuickReply(S.quickReplies.find(r => r.id === Number(ed.dataset.editqr)));
+      const b = e.target.closest('[data-delqr]'); if (b) { await A.del(`/api/quick-replies/${b.dataset.delqr}`); await reloadBootstrap(); renderConfig(); }
+    };
     $('#qr-form').onsubmit = async e => { e.preventDefault(); await A.post('/api/quick-replies', { shortcut: $('#q-short').value.replace(/^\//, ''), text: $('#q-text').value }); await reloadBootstrap(); renderConfig(); };
   }
 
