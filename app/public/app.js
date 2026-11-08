@@ -253,8 +253,8 @@
       <div class="login">
         <form class="login-card" id="login-form">
           <div class="brand"><div class="brand-mark">${I.logo}</div>Central de Parcerias</div>
-          <p>Entre com o e-mail e a senha que o administrador cadastrou para você.</p>
-          <div class="field"><label for="lg-email">E-mail</label><input class="input" id="lg-email" type="email" autocomplete="username" required></div>
+          <p>Entre com o usuário e a senha que o administrador cadastrou para você.</p>
+          <div class="field"><label for="lg-email">Usuário</label><input class="input" id="lg-email" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></div>
           <div class="field"><label for="lg-pass">Senha</label><input class="input" id="lg-pass" type="password" autocomplete="current-password" required></div>
           <div class="form-error" id="lg-err"></div>
           <button class="btn primary" type="submit">Entrar</button>
@@ -912,7 +912,7 @@
     $('#view').innerHTML = `<div class="page"><div class="page-head"><div><h1>Configurações</h1></div></div><div class="settings">
       ${admin ? `<section class="panel"><h2>Conexão do WhatsApp</h2><p>O número conectado aqui é espelhado para toda a equipe. O celular continua funcionando normalmente.</p><div id="wa-box"></div></section>
       <section class="panel"><h2>Equipe</h2><p>Corretores veem a Fila e as conversas deles. Administradores veem tudo.</p><div class="row-list" id="users-list"></div>
-        <form class="inline-form" id="user-form"><input class="input" id="u-name" placeholder="Nome" required><input class="input" id="u-email" type="email" placeholder="E-mail" required><input class="input" id="u-pass" type="text" placeholder="Senha inicial" required minlength="6"><select class="input" id="u-role" style="flex:0 0 130px"><option value="corretor">Corretor</option><option value="admin">Administrador</option></select><button class="btn primary" type="submit">${I.plus}Adicionar</button></form></section>
+        <form class="inline-form" id="user-form"><input class="input" id="u-name" placeholder="Nome" required><input class="input" id="u-email" type="text" placeholder="Usuário (ex: ana.paula)" autocapitalize="none" autocorrect="off" spellcheck="false" required><input class="input" id="u-pass" type="text" placeholder="Senha inicial" required minlength="6"><select class="input" id="u-role" style="flex:0 0 130px"><option value="corretor">Corretor</option><option value="admin">Administrador</option></select><button class="btn primary" type="submit">${I.plus}Adicionar</button></form></section>
       <section class="panel"><h2>Etiquetas</h2><div class="row-list" id="tags-list"></div>
         <form class="inline-form" id="tag-form"><input class="input" id="t-name" placeholder="Nova etiqueta" required><input type="color" class="input" id="t-color" value="#2F6FFF" aria-label="Cor"><button class="btn primary" type="submit">${I.plus}Adicionar</button></form></section>
       <section class="panel"><h2>Respostas rápidas</h2><p>Na conversa, digite / e o atalho para inserir o texto.</p><div class="row-list" id="qr-list"></div>
@@ -993,7 +993,7 @@
     };
     $('#user-form').onsubmit = async e => {
       e.preventDefault();
-      try { await A.post('/api/users', { name: $('#u-name').value, email: $('#u-email').value, password: $('#u-pass').value, role: $('#u-role').value }); await reloadBootstrap(); renderConfig(); toast('Usuário criado. Envie o e-mail e a senha para ele.'); }
+      try { await A.post('/api/users', { name: $('#u-name').value, username: $('#u-email').value, password: $('#u-pass').value, role: $('#u-role').value }); await reloadBootstrap(); renderConfig(); toast('Usuário criado. Envie o usuário e a senha para ele.'); }
       catch (err) { toast(err.message, true); }
     };
     $('#tags-list').innerHTML = S.tags.map(t => `<div class="row-item"><span class="chip"><span class="sw" style="background:${esc(t.color)}"></span>${esc(t.name)}</span><span class="grow"></span><button class="icon-btn" data-deltag="${t.id}" aria-label="Excluir etiqueta">${I.trash}</button></div>`).join('');
@@ -1014,9 +1014,9 @@
     const now = Date.now(); const min = 60e3; const hr = 60 * min; const day = 24 * hr;
     const users = [
       { id: 1, name: 'Kevin Araujo', email: 'kevin@exemplo.com', role: 'admin', active: true },
-      { id: 2, name: 'Ana Paula Ribeiro', email: 'ana@exemplo.com', role: 'corretor', active: true },
-      { id: 3, name: 'Rafael Souza', email: 'rafael@exemplo.com', role: 'corretor', active: true },
-      { id: 4, name: 'Juliana Lima', email: 'juliana@exemplo.com', role: 'corretor', active: true },
+      { id: 2, name: 'Ana Paula Ribeiro', email: 'ana.paula', role: 'corretor', active: true },
+      { id: 3, name: 'Rafael Souza', email: 'rafael', role: 'corretor', active: true },
+      { id: 4, name: 'Juliana Lima', email: 'juliana', role: 'corretor', active: true },
     ];
     const tags = [{ id: 1, name: 'Análise assessoria', color: '#3e6fd0' }, { id: 2, name: 'Fazer follow up', color: '#f5a524' }, { id: 3, name: 'IR 2027', color: '#2A9BC4' }, { id: 4, name: 'Restrição', color: '#e5484d' }, { id: 5, name: 'Perfil de comprador', color: '#8e4ec6' }];
     const qrs = [
@@ -1191,7 +1191,7 @@
           return { message: clone(msg) };
         }
       }
-      if (path.startsWith('/api/users')) { if (method === 'POST') { const nu = { id: users.length + 1, name: body.name, email: body.email, role: body.role, active: true }; users.push(nu); if (nu.role === 'corretor') queue.order.push(nu.id); return { user: nu }; } const uid = Number(path.split('/').pop()); const usr = users.find(x => x.id === uid); if (usr && body.active !== undefined) usr.active = body.active; return { ok: true }; }
+      if (path.startsWith('/api/users')) { if (method === 'POST') { const nu = { id: users.length + 1, name: body.name, email: body.username || body.email, role: body.role, active: true }; users.push(nu); if (nu.role === 'corretor') queue.order.push(nu.id); return { user: nu }; } const uid = Number(path.split('/').pop()); const usr = users.find(x => x.id === uid); if (usr && body.active !== undefined) usr.active = body.active; return { ok: true }; }
       if (path.startsWith('/api/tags')) { if (method === 'POST') tags.push({ id: tags.length + 10, name: body.name, color: body.color }); if (method === 'DELETE') { const i = tags.findIndex(t => t.id === Number(path.split('/').pop())); if (i >= 0) tags.splice(i, 1); } return { ok: true }; }
       if (path.startsWith('/api/quick-replies')) { if (method === 'POST') qrs.push({ id: qrs.length + 10, shortcut: body.shortcut, text: body.text }); if (method === 'DELETE') { const i = qrs.findIndex(t => t.id === Number(path.split('/').pop())); if (i >= 0) qrs.splice(i, 1); } return { ok: true }; }
       if (path === '/api/logout' || path === '/api/login') return { ok: true };

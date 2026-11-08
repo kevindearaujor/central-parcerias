@@ -281,16 +281,19 @@ route('GET', '/api/dashboard', async (req, res, { user, query }) => {
 route('GET', '/api/users', async (req, res, { user }) => { adminOnly(user); send(res, 200, { users: db.prepare('SELECT * FROM users ORDER BY name').all().map(publicUser) }); });
 route('POST', '/api/users', async (req, res, { user }) => {
   adminOnly(user);
-  const { name, email, password, role } = await readBody(req);
-  if (!name || !email || !password || String(password).length < 6) return fail(res, 400, 'Preencha nome, e-mail e senha (mínimo 6 caracteres)');
+  const { name, username, email, password, role } = await readBody(req);
+  // login pode ser um nome de usuário simples (ex: ana.paula) ou um e-mail
+  const login = String(username || email || '').toLowerCase().trim();
+  if (!String(name || '').trim() || !login || !password || String(password).length < 6) return fail(res, 400, 'Preencha nome, usuário e senha (mínimo 6 caracteres)');
+  if (!login.includes('@') && !/^[a-z0-9._-]{3,30}$/.test(login)) return fail(res, 400, 'Usuário deve ter de 3 a 30 caracteres, só letras minúsculas, números, ponto, hífen ou sublinhado, sem espaços nem acentos');
   try {
     const pos = (db.prepare('SELECT MAX(queue_pos) m FROM users').get().m || 0) + 1;
     const r = db.prepare('INSERT INTO users(name, email, pass, role, created_at, queue_pos) VALUES(?, ?, ?, ?, ?, ?)')
-      .run(String(name).trim(), String(email).toLowerCase().trim(), hashPassword(password), role === 'admin' ? 'admin' : 'corretor', Date.now(), pos);
+      .run(String(name).trim(), login, hashPassword(password), role === 'admin' ? 'admin' : 'corretor', Date.now(), pos);
     const u = db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid);
     core.pushAll('users_changed', {});
     send(res, 200, { user: publicUser(u) });
-  } catch { fail(res, 400, 'Já existe um usuário com esse e-mail'); }
+  } catch { fail(res, 400, 'Esse usuário já existe. Escolha outro.'); }
 });
 route('PATCH', '/api/users/:id', async (req, res, { user, params }) => {
   const id = Number(params.id);
