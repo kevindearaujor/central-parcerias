@@ -1014,7 +1014,7 @@
       <section class="panel"><h2>Etiquetas</h2><div class="row-list" id="tags-list"></div>
         <form class="inline-form" id="tag-form"><input class="input" id="t-name" placeholder="Nova etiqueta" required><input type="color" class="input" id="t-color" value="#2F6FFF" aria-label="Cor"><button class="btn primary" type="submit">${I.plus}Adicionar</button></form></section>
       <section class="panel"><h2>Respostas rápidas</h2><p>Na conversa, digite / e o atalho para inserir o texto.</p><div class="row-list" id="qr-list"></div>
-        <form class="inline-form" id="qr-form" style="display:grid;grid-template-columns:140px 1fr auto"><input class="input" id="q-short" placeholder="atalho" required><input class="input" id="q-text" placeholder="Texto da resposta" required><button class="btn primary" type="submit">${I.plus}</button></form></section>` : ''}
+        <form class="inline-form qr-form" id="qr-form"><input class="input" id="q-short" placeholder="atalho" required><textarea class="input" id="q-text" rows="4" placeholder="Texto da resposta. Aperte Enter para pular linha." required></textarea><button class="btn primary" type="submit">${I.plus}Adicionar</button></form></section>` : ''}
       <section class="panel"><h2>Como o lead me vê</h2><p>Foto e nome que o cliente vê no WhatsApp.</p><div id="wa-profile"><div class="sys" style="display:inline-block">Carregando…</div></div></section>
       <section class="panel"><h2>App e avisos no celular</h2><p>Instale a Central como app e receba um aviso sempre que chegar lead para você.</p><div class="app-box" id="app-box"></div></section>
       <section class="panel"><h2>Minha conta</h2><p>${esc(S.me.name)} · ${esc(S.me.email)}</p>

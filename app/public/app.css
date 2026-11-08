@@ -426,3 +426,9 @@ table.t td:first-child { white-space: nowrap; }
 .login-logo svg { width: 56px; height: 56px; flex: none; }
 .login-logo span { font: 800 34px/1 var(--font-ui); letter-spacing: -0.03em; color: var(--fg); white-space: nowrap; }
 .login-logo b { font-weight: 800; color: var(--accent); }
+
+.qr-form { display: grid; grid-template-columns: 140px 1fr auto; align-items: start; }
+.qr-form textarea { min-height: 96px; }
+@media (max-width: 760px) { .qr-form { grid-template-columns: 1fr; } }
+#qr-list small { white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.qr-pop span { white-space: pre-line; }
