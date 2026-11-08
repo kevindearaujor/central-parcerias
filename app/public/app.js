@@ -650,7 +650,7 @@
       const v = ta.value;
       if (!v.startsWith('/') || v.includes('\n')) { pop.hidden = true; return; }
       const term = v.slice(1).toLowerCase();
-      items = S.quickReplies.filter(r => r.shortcut.toLowerCase().includes(term) || r.text.toLowerCase().includes(term)).slice(0, 8);
+      items = S.quickReplies.filter(r => r.shortcut.toLowerCase().includes(term) || r.text.toLowerCase().includes(term));
       if (!items.length) { pop.hidden = true; return; }
       sel = Math.min(sel, items.length - 1);
       pop.innerHTML = items.map((r, i) => `<button type="button" data-i="${i}" class="${i === sel ? 'sel' : ''}"><b>/${esc(r.shortcut)}</b><span>${esc(trunc(r.text, 90))}</span></button>`).join('');
