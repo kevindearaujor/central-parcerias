@@ -1,0 +1,5 @@
+# nunca enviar senhas nem dados para o GitHub
+.env
+app/data/
+*.zip
+.DS_Store

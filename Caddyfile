@@ -1,0 +1,9 @@
+{$DOMAIN} {
+	encode gzip
+	# o webhook só é usado dentro do servidor; bloqueado para a internet
+	@webhook path /webhook/*
+	respond @webhook 403
+	reverse_proxy app:3000 {
+		flush_interval -1
+	}
+}

@@ -1,0 +1,10 @@
+{
+  "name": "central-parcerias",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Painel de atendimento via WhatsApp (espelho) para equipe de corretores",
+  "main": "src/server.js",
+  "scripts": { "start": "node src/server.js" },
+  "engines": { "node": ">=22.13" },
+  "license": "UNLICENSED"
+}
