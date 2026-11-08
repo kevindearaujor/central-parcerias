@@ -118,7 +118,7 @@
   const isOut = (c) => c.stage === 'perdido' || c.stage === 'arquivado';
   const inFunnel = (c) => S.stages.some(s => s.id === c.stage);
   const isAdmin = () => S.me?.role === 'admin';
-  const brokers = () => S.users.filter(u => u.active);
+  const brokers = () => S.users.filter(u => u.active && !u.deleted);
   const canSeeChat = (c) => S.me && (S.me.role === 'admin' || c.assigned_to == null || c.assigned_to === S.me.id);
 
   // ================= API =================
@@ -1070,14 +1070,35 @@
       <div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="lo-ok" style="background:var(--danger);border-color:var(--danger);color:#fff">Desconectar</button></div>`,
       (bg, close) => bg.querySelector('#lo-ok').onclick = async () => { try { S.waFull = await A.post('/api/wa/logout'); close(); renderWaBox(); renderWaWarn(); } catch (e) { toast(e.message, true); } });
   }
+  function deleteUserModal(u) {
+    if (!u) return;
+    const n = [...S.chats.values()].filter(c => c.assigned_to === u.id).length;
+    const others = S.users.filter(x => x.active && !x.deleted && x.id !== u.id);
+    modal(`<h3>Excluir ${esc(u.name)}?</h3>
+      <p style="margin:0;color:var(--muted)">O login deixa de funcionar na hora. O nome continua aparecendo no histórico das conversas. Não dá para desfazer.</p>
+      <div class="field"><label for="del-to">${n ? `Transferir ${n === 1 ? 'o lead' : `os ${n} leads`} de ${esc(u.name)} para` : 'Leads futuros dele, se houver, vão para'}</label>
+        <select class="input" id="del-to">${others.map(x => `<option value="${x.id}">${esc(x.name)}${x.role === 'admin' ? ' (admin)' : ''}</option>`).join('')}<option value="">Fila (sem corretor)</option></select></div>
+      <div class="form-error" id="del-err"></div>
+      <div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="del-ok" style="background:var(--danger);border-color:var(--danger);color:#fff">Excluir e transferir</button></div>`,
+    (bg, close) => bg.querySelector('#del-ok').onclick = async () => {
+      const to = bg.querySelector('#del-to').value;
+      try {
+        const r = await A.post(`/api/users/${u.id}/delete`, { transferTo: to ? Number(to) : null });
+        close(); await reloadBootstrap(); await loadChats(); renderConfig();
+        const dest = to ? userById(Number(to))?.name : 'a Fila';
+        toast(r.moved ? `${u.name} excluído. ${r.moved} ${r.moved === 1 ? 'lead foi' : 'leads foram'} para ${dest}.` : `${u.name} excluído.`);
+      } catch (err) { bg.querySelector('#del-err').textContent = err.message; }
+    });
+  }
   function bindAdminConfig() {
     const ul = $('#users-list');
-    ul.innerHTML = S.users.map(u => `<div class="row-item"><div class="avatar sm" style="background:${colorFor('u' + u.id)}">${esc(initials(u.name))}</div>
+    ul.innerHTML = S.users.filter(u => !u.deleted).map(u => `<div class="row-item"><div class="avatar sm" style="background:${colorFor('u' + u.id)}">${esc(initials(u.name))}</div>
       <div class="grow"><strong>${esc(u.name)}</strong><small>${esc(u.email)}</small></div>
       <span class="pill ${u.role === 'admin' ? 'admin' : ''} ${u.active ? '' : 'off'}">${u.active ? (u.role === 'admin' ? 'Admin' : 'Corretor') : 'Inativo'}</span>
-      ${u.id !== S.me.id ? `<button class="btn sm ghost" data-toggle="${u.id}">${u.active ? 'Desativar' : 'Reativar'}</button><button class="btn sm ghost" data-reset="${u.id}">Nova senha</button>` : ''}</div>`).join('');
+      ${u.id !== S.me.id ? `<button class="btn sm ghost" data-toggle="${u.id}">${u.active ? 'Desativar' : 'Reativar'}</button><button class="btn sm ghost" data-reset="${u.id}">Nova senha</button><button class="icon-btn" data-del="${u.id}" aria-label="Excluir ${esc(u.name)}" title="Excluir">${I.trash}</button>` : ''}</div>`).join('');
     ul.onclick = async e => {
-      const t = e.target.closest('[data-toggle]'); const r = e.target.closest('[data-reset]');
+      const t = e.target.closest('[data-toggle]'); const r = e.target.closest('[data-reset]'); const d = e.target.closest('[data-del]');
+      if (d) return deleteUserModal(userById(Number(d.dataset.del)));
       if (t) { const u = userById(Number(t.dataset.toggle)); try { await A.patch(`/api/users/${u.id}`, { active: !u.active }); await reloadBootstrap(); renderConfig(); } catch (err) { toast(err.message, true); } }
       if (r) modal(`<h3>Nova senha</h3><div class="field"><label for="np">Senha (mínimo 6 caracteres)</label><input class="input" id="np" type="text"></div><div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="np-ok">Salvar</button></div>`,
         (bg, close) => bg.querySelector('#np-ok').onclick = async () => { try { await A.patch(`/api/users/${r.dataset.reset}`, { password: bg.querySelector('#np').value }); close(); toast('Senha alterada'); } catch (err) { toast(err.message, true); } });
@@ -1281,6 +1302,15 @@
           emitChat(c); emitMsg(id, msg);
           return { message: clone(msg) };
         }
+      }
+      const dm = path.match(/^\/api\/users\/(\d+)\/delete$/);
+      if (dm) {
+        const uid = Number(dm[1]); const usr = users.find(x => x.id === uid); if (!usr) return err('Usuário não encontrado');
+        const to = body.transferTo ? Number(body.transferTo) : null; const tgt = users.find(x => x.id === to);
+        let moved = 0;
+        for (const c of chats.values()) if (c.assigned_to === uid) { c.assigned_to = to; moved++; addMsg(c.id, { chat_id: c.id, from_me: true, kind: 'system', body: tgt ? `${usr.name} foi excluído. Lead transferido para ${tgt.name}.` : `${usr.name} foi excluído. Lead voltou para a fila.`, ts: Date.now() }); }
+        usr.deleted = true; usr.active = false; queue.order = queue.order.filter(x => x !== uid);
+        return { moved };
       }
       if (path.startsWith('/api/users')) { if (method === 'POST') { const nu = { id: users.length + 1, name: body.name, email: body.username || body.email, role: body.role, active: true }; users.push(nu); if (nu.role === 'corretor') queue.order.push(nu.id); return { user: nu }; } const uid = Number(path.split('/').pop()); const usr = users.find(x => x.id === uid); if (usr && body.active !== undefined) usr.active = body.active; return { ok: true }; }
       if (path.startsWith('/api/tags')) { if (method === 'POST') tags.push({ id: tags.length + 10, name: body.name, color: body.color }); if (method === 'DELETE') { const i = tags.findIndex(t => t.id === Number(path.split('/').pop())); if (i >= 0) tags.splice(i, 1); } return { ok: true }; }

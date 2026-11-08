@@ -595,7 +595,36 @@ function updateChat(user, chat, patch) {
   return fresh;
 }
 
+// Exclui um usuário e passa os leads dele para outra pessoa (ou para a fila).
+// O nome continua no histórico das conversas; o login deixa de existir.
+function deleteUser(admin, userId, transferTo) {
+  const u = q.userById.get(userId);
+  if (!u || u.deleted) throw Object.assign(new Error('Usuário não encontrado'), { status: 404 });
+  if (u.id === admin.id) throw Object.assign(new Error('Você não pode excluir o seu próprio usuário'), { status: 400 });
+  const target = transferTo ? q.userById.get(Number(transferTo)) : null;
+  if (transferTo && (!target || !target.active || target.deleted || target.id === u.id)) throw Object.assign(new Error('Escolha um corretor ativo para receber os leads'), { status: 400 });
+  const chats = db.prepare('SELECT id FROM chats WHERE assigned_to = ?').all(u.id);
+  const now = Date.now();
+  db.prepare('UPDATE chats SET assigned_to = ?, auto_assigned = 0, assigned_at = ? WHERE assigned_to = ?').run(target ? target.id : null, now, u.id);
+  db.prepare("UPDATE users SET deleted = 1, active = 0, queue_on = 0, email = ?, pass = '' WHERE id = ?").run(`#excluido-${u.id}-${now}`, u.id);
+  db.prepare('DELETE FROM push_subs WHERE user_id = ?').run(u.id);
+  if (Number(getSetting('rr_last', '0')) === u.id) setSetting('rr_last', '0');
+  const text = target ? `${u.name} foi excluído. Lead transferido para ${target.name}.` : `${u.name} foi excluído. Lead voltou para a fila.`;
+  for (const c of chats) {
+    const sys = addSystemMessage(c.id, text, admin.id);
+    const fresh = getChat(c.id);
+    pushChat(fresh, u.id);
+    pushMessage(fresh, sys);
+  }
+  if (target && chats.length && target.id !== admin.id) {
+    push.notifyUsers([target.id], { title: `${chats.length} ${chats.length === 1 ? 'lead transferido' : 'leads transferidos'} para você`, body: `Eram de ${u.name}. Abra a Central para continuar o atendimento.`, tag: 'transfer', url: '/' });
+  }
+  pushAll('users_changed', {});
+  return { moved: chats.length };
+}
+
 module.exports = {
+  deleteUser,
   addClient, removeClient, canSee, present, presentMsg, pushChat, pushAll, setWaState, getWaState,
   getChat, getChatByRef, handleWebhook, refreshAvatar, avatarFile, queueState, reassignOverdue, sendText, sendMedia, addNote, updateChat, findOrCreateChat,
   extractContent, resolveJid, toMs,

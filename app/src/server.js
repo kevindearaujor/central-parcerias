@@ -124,7 +124,7 @@ route('POST', '/api/login', async (req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE email = ? AND active = 1').get(String(email || '').toLowerCase().trim());
   if (!u || !checkPassword(password, u.pass)) {
     attempts.get(ip).push(Date.now());
-    return fail(res, 401, 'E-mail ou senha incorretos');
+    return fail(res, 401, 'Usuário ou senha incorretos');
   }
   setSession(req, res, makeToken(u.id), SESSION_DAYS * 86400);
   send(res, 200, { user: publicUser(u) });
@@ -315,6 +315,11 @@ route('POST', '/api/users', async (req, res, { user }) => {
     core.pushAll('users_changed', {});
     send(res, 200, { user: publicUser(u) });
   } catch { fail(res, 400, 'Esse usuário já existe. Escolha outro.'); }
+});
+route('POST', '/api/users/:id/delete', async (req, res, { user, params }) => {
+  adminOnly(user);
+  const { transferTo } = await readBody(req);
+  send(res, 200, core.deleteUser(user, Number(params.id), transferTo ? Number(transferTo) : null));
 });
 route('PATCH', '/api/users/:id', async (req, res, { user, params }) => {
   const id = Number(params.id);

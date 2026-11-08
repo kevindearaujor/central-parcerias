@@ -83,7 +83,7 @@ for (const col of ['prev_stage TEXT', 'ref TEXT', 'avatar_at INTEGER', 'assigned
 }
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS chats_ref ON chats(ref)');
 // fila de distribuição: quem recebe lead e em que ordem
-for (const col of ['queue_on INTEGER NOT NULL DEFAULT 1', 'queue_pos INTEGER']) {
+for (const col of ['queue_on INTEGER NOT NULL DEFAULT 1', 'queue_pos INTEGER', 'deleted INTEGER NOT NULL DEFAULT 0']) {
   try { db.exec(`ALTER TABLE users ADD COLUMN ${col}`); } catch {}
 }
 db.exec('UPDATE users SET queue_pos = id WHERE queue_pos IS NULL');
@@ -176,7 +176,7 @@ function rowMsg(r) {
 }
 function publicUser(u) {
   if (!u) return null;
-  return { id: u.id, name: u.name, email: u.email, role: u.role, active: !!u.active };
+  return { id: u.id, name: u.name, email: u.deleted ? '' : u.email, role: u.role, active: !!u.active, deleted: !!u.deleted };
 }
 
 module.exports = {
