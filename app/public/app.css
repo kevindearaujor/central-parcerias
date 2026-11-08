@@ -369,8 +369,8 @@ table.t td:first-child { white-space: nowrap; }
 .arc-actions { display: flex; gap: 6px; }
 
 .wp-wrap { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 20px; align-items: start; }
-.wp-card { background: #FFFFFF; color: #111B21; border-radius: 16px; padding: 28px 16px 24px; box-shadow: var(--shadow); text-align: center; max-width: 340px; }
-.wp-photo { position: relative; width: 112px; height: 112px; border-radius: 50%; margin: 0 auto 12px; background: #DFE5E7; color: #54656F; display: grid; place-items: center; font: 700 34px var(--font-display); overflow: hidden; }
+.wp-card { background: transparent; color: var(--fg); padding: 8px 16px 4px; text-align: center; max-width: 340px; }
+.wp-photo { position: relative; width: 112px; height: 112px; border-radius: 50%; margin: 0 auto 12px; background: var(--surface-2); color: var(--muted); display: grid; place-items: center; font: 700 34px var(--font-display); overflow: hidden; }
 .wp-photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .wp-name { font: 600 20px var(--font-ui); padding: 0 16px; }
 .wp-num { color: #667781; font-size: 15px; margin-top: 2px; }

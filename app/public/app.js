@@ -222,8 +222,7 @@
     connectEvents();
     setupApp();
     await loadChats();
-    const last = store.get('lastView', 'inbox');
-    goView(['inbox', 'funil', 'fila', 'arquivo', 'painel', 'config'].includes(last) ? last : 'inbox');
+    goView('inbox');
     openFromUrl(location.href);
   }
 
@@ -396,7 +395,7 @@
     });
   }
   function goView(v) {
-    S.view = v; store.set('lastView', v);
+    S.view = v;
     document.querySelectorAll('.rail-btn').forEach(b => b.classList.toggle('active', b.dataset.view === v));
     if (v === 'inbox') renderInbox();
     if (v === 'funil') renderFunnel();
@@ -1006,6 +1005,9 @@
 
   // ================= configurações =================
   function renderConfig() {
+    const prevPage = S.view === 'config' ? $('#view .page') : null;
+    const keepScroll = prevPage ? prevPage.scrollTop : 0;
+    requestAnimationFrame(() => { const pg = $('#view .page'); if (pg && keepScroll) pg.scrollTop = keepScroll; });
     const admin = isAdmin();
     $('#view').innerHTML = `<div class="page"><div class="page-head"><div><h1>Configurações</h1></div></div><div class="settings">
       ${admin ? `<section class="panel"><h2>Conexão do WhatsApp</h2><p>O número conectado aqui é espelhado para toda a equipe. O celular continua funcionando normalmente.</p><div id="wa-box"></div></section>
