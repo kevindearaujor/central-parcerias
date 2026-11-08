@@ -456,3 +456,16 @@ body { overscroll-behavior-y: contain; }
 @supports (height: 100dvh) {
   html, body, #root, .app { height: 100dvh; }
 }
+
+/* ---------- interruptor de tema (celular) ---------- */
+.theme-switch { display: none; position: relative; width: 64px; height: 32px; border-radius: 16px; border: 1px solid var(--line-strong); background: var(--surface-2); padding: 0 7px; align-items: center; justify-content: space-between; color: var(--muted); flex: none; }
+.theme-switch svg { width: 16px; height: 16px; position: relative; z-index: 1; }
+.theme-switch .knob { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); transition: transform .18s; }
+.theme-switch.on .knob { transform: translateX(32px); }
+.theme-switch svg:first-child { color: var(--accent-ink); }
+.theme-switch.on svg:first-child { color: var(--muted); }
+.theme-switch.on svg:last-of-type { color: var(--accent-ink); }
+@media (max-width: 760px) {
+  .list-title h1 { font-size: 28px; letter-spacing: -.02em; }
+  .theme-switch { display: inline-flex; }
+}

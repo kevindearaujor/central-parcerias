@@ -33,6 +33,8 @@
     warn: P('<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'),
     archive: P('<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/>'),
     lost: P('<circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/>'),
+    sun: P('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
+    moon: P('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
     queue: P('<path d="M4 6h11M4 12h11M4 18h7"/><path d="M18 9v10M15 16l3 3 3-3"/>'),
     grip: P('<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>', 'fill="currentColor"'),
     undo: P('<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
@@ -454,7 +456,7 @@
           <div id="wa-warn"></div>
           <div id="push-banner"></div>
           <div class="list-head">
-            <div class="list-title"><h1>Conversas${DEMO ? '<span class="demo-chip">Demo</span>' : ''}</h1></div>
+            <div class="list-title"><h1>Conversas${DEMO ? '<span class="demo-chip">Demo</span>' : ''}</h1><button class="theme-switch" id="theme-switch" role="switch" aria-label="Tema escuro">${I.sun}<span class="knob"></span>${I.moon}</button></div>
             <div class="search">${I.search}<input class="input" id="q" placeholder="Buscar nome, número ou anúncio" value="${esc(S.q)}" autocomplete="off"></div>
             <div class="tabs" id="tabs"></div>
             <div class="filters" id="filters"></div>
@@ -465,6 +467,10 @@
         <aside class="detail-pane" id="detail-pane"></aside>
       </div>`;
     $('#q').addEventListener('input', e => { S.q = e.target.value; renderList(); });
+    const ts = $('#theme-switch');
+    const syncSwitch = () => { const dark = store.get('theme', 'dark') !== 'light'; ts.classList.toggle('on', dark); ts.setAttribute('aria-checked', String(dark)); };
+    syncSwitch();
+    ts.onclick = () => { store.set('theme', store.get('theme', 'dark') === 'light' ? 'dark' : 'light'); applyTheme(); syncSwitch(); };
     $('#chat-list').addEventListener('click', e => { const it = e.target.closest('[data-chat]'); if (it) openChat(it.dataset.chat); });
     renderWaWarn(); renderListFilters(); renderList(); renderPushBanner();
     if (S.current && S.chats.has(S.current)) openChat(S.current, true); else renderChatPane();
