@@ -220,9 +220,103 @@
     catch { if (!S.me) return; }
     renderApp();
     connectEvents();
+    setupApp();
     await loadChats();
     const last = store.get('lastView', 'inbox');
     goView(['inbox', 'funil', 'fila', 'arquivo', 'painel', 'config'].includes(last) ? last : 'inbox');
+    openFromUrl(location.href);
+  }
+
+  // ================= app instalável e avisos =================
+  let installPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; if (S.view === 'config') renderAppBox(); });
+  const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  function setupApp() {
+    if (DEMO || !('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.addEventListener('message', (e) => { if (e.data?.type === 'open') openFromUrl(new URL(e.data.url, location.origin).href); });
+  }
+  function openFromUrl(href) {
+    let ref = null;
+    try { ref = new URL(href).searchParams.get('c'); } catch {}
+    if (!ref) return;
+    try { history.replaceState(null, '', '/'); } catch {}
+    S.current = ref; goView('inbox');
+  }
+  // 'demo' | 'unsupported' | 'need-install' | 'denied' | 'on' | 'off'
+  async function pushStatus() {
+    if (DEMO) return 'demo';
+    if (isIOS() && !isStandalone()) return 'need-install';
+    if (!pushSupported()) return 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      return sub && Notification.permission === 'granted' ? 'on' : 'off';
+    } catch { return 'off'; }
+  }
+  function keyToBytes(b64) {
+    const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, c => c.charCodeAt(0));
+  }
+  async function enablePush() {
+    if (DEMO) { toast('Na demonstração não há avisos no celular'); return false; }
+    const st = await pushStatus();
+    if (st === 'need-install') { toast('No iPhone, instale o app primeiro: Compartilhar › Adicionar à Tela de Início', true); return false; }
+    if (st === 'unsupported') { toast('Este navegador não recebe avisos. No celular, use o Chrome (Android) ou instale o app (iPhone).', true); return false; }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('Os avisos foram bloqueados. Libere nas configurações do navegador ou do celular.', true); return false; }
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const { publicKey } = await A.get('/api/push/key');
+      const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyToBytes(publicKey) });
+      await A.post('/api/push/subscribe', { subscription: sub.toJSON() });
+      toast('Avisos ativados neste aparelho');
+      return true;
+    } catch (e) { toast('Não consegui ativar os avisos: ' + (e.message || 'erro'), true); return false; }
+  }
+  async function disablePushHere() {
+    if (DEMO || !pushSupported()) return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) { await A.post('/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); }
+    } catch {}
+  }
+  async function renderPushBanner() {
+    const el = $('#push-banner'); if (!el) return;
+    const st = await pushStatus();
+    if (!$('#push-banner')) return;
+    const dismissed = store.get('pushBannerUntil', 0) > Date.now();
+    if (dismissed || !['off', 'need-install'].includes(st)) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="push-banner">
+      <span>${st === 'need-install' ? 'Para receber avisos de lead novo no iPhone, toque em <b>Compartilhar</b> e depois em <b>Adicionar à Tela de Início</b>.' : 'Ative os avisos para saber na hora quando chegar lead novo.'}</span>
+      ${st === 'off' ? '<button class="btn sm primary" id="pb-on">Ativar</button>' : ''}
+      <button class="icon-btn" id="pb-x" aria-label="Agora não">${I.x}</button></div>`;
+    const on = $('#pb-on'); if (on) on.onclick = async () => { if (await enablePush()) renderPushBanner(); };
+    $('#pb-x').onclick = () => { store.set('pushBannerUntil', Date.now() + 3 * 864e5); el.innerHTML = ''; };
+  }
+  async function renderAppBox() {
+    const el = $('#app-box'); if (!el) return;
+    const st = await pushStatus();
+    if (!$('#app-box')) return;
+    const installed = isStandalone();
+    let install;
+    if (installed) install = `<p class="ok-line">${I.check}App instalado neste aparelho.</p>`;
+    else if (installPrompt) install = `<button class="btn primary" id="app-install">Instalar app</button>`;
+    else if (isIOS()) install = `<ol class="steps"><li>Abra a Central no <b>Safari</b>.</li><li>Toque em <b>Compartilhar</b> (o quadrado com a seta para cima).</li><li>Toque em <b>Adicionar à Tela de Início</b> e confirme.</li></ol>`;
+    else install = `<ol class="steps"><li>No celular Android, abra a Central no <b>Chrome</b>.</li><li>Toque no menu <b>⋮</b> e em <b>Instalar app</b> (ou "Adicionar à tela inicial").</li></ol><p class="phone" style="margin:6px 0 0">No computador, o Chrome mostra um ícone de instalar na barra de endereço.</p>`;
+    const pushTxt = { on: 'Avisos ativados neste aparelho.', off: 'Avisos desligados neste aparelho.', denied: 'Os avisos estão bloqueados. Libere nas configurações do navegador ou do celular e volte aqui.', 'need-install': 'No iPhone, os avisos só funcionam com o app instalado na tela de início.', unsupported: 'Este navegador não recebe avisos.', demo: 'Na demonstração não há avisos no celular.' }[st];
+    el.innerHTML = `
+      <div class="app-col"><span class="label">Instalar no celular</span>${install}</div>
+      <div class="app-col"><span class="label">Avisos de lead novo</span><p class="phone" style="margin:0">${pushTxt}</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${st === 'off' || st === 'demo' ? '<button class="btn primary" id="push-on">Ativar avisos</button>' : ''}${st === 'on' ? '<button class="btn" id="push-test">Enviar aviso de teste</button>' : ''}</div></div>`;
+    const ib = $('#app-install'); if (ib) ib.onclick = async () => { installPrompt.prompt(); await installPrompt.userChoice.catch(() => {}); installPrompt = null; renderAppBox(); };
+    const po = $('#push-on'); if (po) po.onclick = async () => { await enablePush(); renderAppBox(); };
+    const pt = $('#push-test'); if (pt) pt.onclick = async () => { try { await A.post('/api/push/test'); toast('Aviso enviado. Deve chegar em alguns segundos.'); } catch (e) { toast(e.message, true); } };
   }
   async function reloadBootstrap() {
     const b = await A.get('/api/bootstrap');
@@ -315,6 +409,7 @@
       <div class="inbox ${store.get('hideDetail', false) ? 'hide-detail' : ''}" id="inbox">
         <section class="list-pane">
           <div id="wa-warn"></div>
+          <div id="push-banner"></div>
           <div class="list-head">
             <div class="list-title"><h1>Conversas${DEMO ? '<span class="demo-chip">Demo</span>' : ''}</h1></div>
             <div class="search">${I.search}<input class="input" id="q" placeholder="Buscar nome, número ou anúncio" value="${esc(S.q)}" autocomplete="off"></div>
@@ -328,7 +423,7 @@
       </div>`;
     $('#q').addEventListener('input', e => { S.q = e.target.value; renderList(); });
     $('#chat-list').addEventListener('click', e => { const it = e.target.closest('[data-chat]'); if (it) openChat(it.dataset.chat); });
-    renderWaWarn(); renderListFilters(); renderList();
+    renderWaWarn(); renderListFilters(); renderList(); renderPushBanner();
     if (S.current && S.chats.has(S.current)) openChat(S.current, true); else renderChatPane();
   }
   function renderWaWarn() {
@@ -918,11 +1013,11 @@
       <section class="panel"><h2>Respostas rápidas</h2><p>Na conversa, digite / e o atalho para inserir o texto.</p><div class="row-list" id="qr-list"></div>
         <form class="inline-form" id="qr-form" style="display:grid;grid-template-columns:140px 1fr auto"><input class="input" id="q-short" placeholder="atalho" required><input class="input" id="q-text" placeholder="Texto da resposta" required><button class="btn primary" type="submit">${I.plus}</button></form></section>` : ''}
       <section class="panel"><h2>Como o lead me vê</h2><p>Foto e nome que o cliente vê no WhatsApp.</p><div id="wa-profile"><div class="sys" style="display:inline-block">Carregando…</div></div></section>
+      <section class="panel"><h2>App e avisos no celular</h2><p>Instale a Central como app e receba um aviso sempre que chegar lead para você.</p><div class="app-box" id="app-box"></div></section>
       <section class="panel"><h2>Minha conta</h2><p>${esc(S.me.name)} · ${esc(S.me.email)}</p>
         <div style="display:grid;gap:12px">
           <label class="switch"><input type="checkbox" id="snd" ${store.get('sound', true) ? 'checked' : ''}><span>Som ao chegar mensagem</span></label>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <button class="btn" id="notif-btn">Ativar notificações do navegador</button>
             <select class="input" id="theme-sel" style="width:auto"><option value="dark">Tema escuro (padrão)</option><option value="light">Tema claro</option></select>
           </div>
           <form class="inline-form" id="pw-form" style="margin:0"><input class="input" id="pw-new" type="password" placeholder="Nova senha" minlength="6" autocomplete="new-password" required><button class="btn" type="submit">Trocar senha</button></form>
@@ -934,13 +1029,9 @@
     $('#snd').onchange = e => store.set('sound', e.target.checked);
     $('#theme-sel').value = store.get('theme', 'dark') === 'light' ? 'light' : 'dark';
     $('#theme-sel').onchange = e => { store.set('theme', e.target.value); applyTheme(); };
-    $('#notif-btn').onclick = async () => {
-      if (!('Notification' in window)) return toast('Este navegador não oferece notificações', true);
-      const p = await Notification.requestPermission();
-      toast(p === 'granted' ? 'Notificações ativadas' : 'Notificações bloqueadas no navegador', p !== 'granted');
-    };
+    renderAppBox();
     $('#pw-form').onsubmit = async e => { e.preventDefault(); try { await A.patch(`/api/users/${S.me.id}`, { password: $('#pw-new').value }); $('#pw-new').value = ''; toast('Senha alterada'); } catch (err) { toast(err.message, true); } };
-    $('#logout-btn').onclick = async () => { if (DEMO) return toast('Na demonstração não há login'); await A.post('/api/logout'); location.reload(); };
+    $('#logout-btn').onclick = async () => { if (DEMO) return toast('Na demonstração não há login'); await disablePushHere(); await A.post('/api/logout'); location.reload(); };
   }
   async function loadProfile(fresh) {
     const el = $('#wa-profile'); if (!el) return;

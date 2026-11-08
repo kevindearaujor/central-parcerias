@@ -413,3 +413,11 @@ table.t td:first-child { white-space: nowrap; }
 .q-reassign small { color: var(--muted); font-size: 12.5px; }
 .q-reassign select { width: auto; height: 34px; }
 .q-reassign.disabled { opacity: .5; }
+
+.push-banner { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 14px; background: var(--accent-soft); color: var(--fg); font-size: 13px; border-bottom: 1px solid var(--line); }
+.push-banner span { flex: 1; min-width: 0; }
+.push-banner .icon-btn { width: 30px; height: 30px; flex: none; }
+.app-box { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+.app-col { display: grid; gap: 10px; align-content: start; }
+.ok-line { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--ok); font-weight: 600; }
+.ok-line svg { width: 18px; height: 18px; }

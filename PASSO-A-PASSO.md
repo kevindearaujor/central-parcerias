@@ -70,10 +70,12 @@ Ele instala o Docker, pergunta o endereço do painel, seu nome, e-mail e senha, 
 
 ## Atualizar depois (com GitHub)
 
-Se a Central foi instalada a partir do GitHub, para aplicar uma versão nova: substitua os arquivos na pasta do repositório, faça Commit + Push no GitHub Desktop e, no terminal do navegador da Hostinger, rode:
+O servidor confere o GitHub a cada 5 minutos e aplica sozinho qualquer versão nova. Basta substituir os arquivos na pasta do repositório e fazer Commit + Push no GitHub Desktop. O histórico das atualizações fica em `/var/log/central-update.log`.
+
+Para forçar na hora, no Web console da Hostinger:
 
 ```bash
-cd ~/central-parcerias && git pull && docker compose up -d --build
+/usr/local/bin/central-update.sh
 ```
 
 ## Comandos úteis (dentro da pasta `central-parcerias` no servidor)

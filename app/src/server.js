@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const { db, DATA_DIR, STAGES, OUT_STAGES, hashPassword, checkPassword, getSetting, setSetting, rowChat, rowMsg, publicUser } = require('./db');
 const core = require('./core');
 const evo = require('./evolution');
+const push = require('./push');
 
 const PORT = Number(process.env.PORT || 3000);
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
@@ -84,7 +85,7 @@ async function readBody(req, limit = 25 * 1024 * 1024) {
   });
 }
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.json': 'application/json' };
+const MIME = { '.webmanifest': 'application/manifest+json', '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json', '.json': 'application/json' };
 function serveStatic(req, res, pathname) {
   let rel = decodeURIComponent(pathname);
   if (rel === '/' || !path.extname(rel)) rel = '/index.html';
@@ -92,7 +93,10 @@ function serveStatic(req, res, pathname) {
   if (!file.startsWith(PUBLIC_DIR)) return fail(res, 403, 'Proibido');
   fs.readFile(file, (err, buf) => {
     if (err) return fail(res, 404, 'Não encontrado');
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': rel === '/index.html' ? 'no-cache' : 'public, max-age=300' });
+    const fresh = rel === '/index.html' || rel === '/sw.js' || rel === '/manifest.webmanifest';
+    const headers = { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': fresh ? 'no-cache' : 'public, max-age=300' };
+    if (rel === '/sw.js') headers['Service-Worker-Allowed'] = '/';
+    res.writeHead(200, headers);
     res.end(buf);
   });
 }
@@ -246,6 +250,23 @@ route('GET', '/api/avatar/:ref', async (req, res, { user, params }) => {
   const buf = fs.readFileSync(file);
   res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400', 'Content-Length': buf.length });
   res.end(buf);
+});
+
+// ---- avisos no celular ----
+route('GET', '/api/push/key', async (req, res, { user }) => send(res, 200, { publicKey: push.vapidKeys().pub, devices: push.countFor(user.id) }));
+route('POST', '/api/push/subscribe', async (req, res, { user }) => {
+  const { subscription } = await readBody(req);
+  push.subscribe(user.id, subscription);
+  send(res, 200, { ok: true, devices: push.countFor(user.id) });
+});
+route('POST', '/api/push/unsubscribe', async (req, res) => {
+  const { endpoint } = await readBody(req);
+  push.unsubscribe(endpoint);
+  send(res, 200, { ok: true });
+});
+route('POST', '/api/push/test', async (req, res, { user }) => {
+  push.notifyUsers([user.id], { title: 'Central de Parcerias', body: 'Pronto! Os avisos de lead novo vão chegar assim.', tag: 'teste', url: '/' });
+  send(res, 200, { ok: true, devices: push.countFor(user.id) });
 });
 
 // ---- painel ----

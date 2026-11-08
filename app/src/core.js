@@ -5,6 +5,42 @@ const path = require('node:path');
 const { DATA_DIR } = require('./db');
 const { db, rowChat, rowMsg, getSetting, setSetting, STAGE_IDS, FUNNEL_IDS, newRef } = require('./db');
 const evo = require('./evolution');
+const push = require('./push');
+
+// ================= avisos no celular =================
+function displayName(c) { return c.name || c.push_name || 'Lead'; }
+function queueAudience() {
+  return db.prepare("SELECT id FROM users WHERE active = 1 AND (role = 'admin' OR (role = 'corretor' AND queue_on = 1))").all().map(u => u.id);
+}
+function adminIds() { return db.prepare("SELECT id FROM users WHERE active = 1 AND role = 'admin'").all().map(u => u.id); }
+// kind: 'new' (lead novo), 'msg' (mensagem nova), 'assigned' (lead passou para alguém), 'queue' (voltou para a fila)
+function notifyChat(c, kind, text) {
+  try {
+    if (!c) return;
+    const name = displayName(c);
+    const preview = String(text || c.last_text || '').slice(0, 120);
+    const data = { tag: c.ref, url: `/?c=${encodeURIComponent(c.ref)}` };
+    let to = [];
+    if (kind === 'new') {
+      data.title = c.ad_title ? `Novo lead · ${c.ad_title}` : `Novo lead · ${name}`;
+      data.body = c.assigned_to ? `${name}: ${preview}` : `${name} está na fila: ${preview}`;
+      to = c.assigned_to ? [c.assigned_to, ...adminIds()] : queueAudience();
+    } else if (kind === 'assigned') {
+      data.title = `Lead para você · ${name}`;
+      data.body = preview || 'Responda o quanto antes.';
+      to = [c.assigned_to];
+    } else if (kind === 'queue') {
+      data.title = `Lead sem resposta na fila · ${name}`;
+      data.body = preview;
+      to = queueAudience();
+    } else {
+      data.title = name;
+      data.body = preview;
+      to = c.assigned_to ? [c.assigned_to] : queueAudience();
+    }
+    push.notifyUsers(to, data);
+  } catch (e) { console.warn('[aviso]', e.message); }
+}
 
 const SHOW_GROUPS = process.env.SHOW_GROUPS === '1';
 
@@ -131,6 +167,7 @@ function reassignOverdue() {
     const fresh = getChat(c.id);
     pushChat(fresh, c.assigned_to);
     pushMessage(fresh, sys);
+    notifyChat(fresh, next ? 'assigned' : 'queue');
   }
 }
 setInterval(() => { try { reassignOverdue(); } catch (e) { console.error('[repasse]', e.message); } }, 30e3);
@@ -396,6 +433,7 @@ function handleUpsert(data) {
   pushMessage(fresh, msg);
   for (const s of sys) pushMessage(fresh, s);
   if (!fromMe && !created) refreshAvatar(fresh);
+  if (!fromMe) notifyChat(fresh, created ? 'new' : 'msg', preview(content.kind, content.body, content.fileName));
 }
 
 const STATUS_RANK = { ERROR: 0, PENDING: 1, SERVER_ACK: 2, DELIVERY_ACK: 3, READ: 4, PLAYED: 5 };
@@ -553,6 +591,7 @@ function updateChat(user, chat, patch) {
   const sysMsgs = sys.map(t => addSystemMessage(chat.id, t, user.id));
   pushChat(fresh, prevAssigned !== fresh.assigned_to ? prevAssigned : undefined);
   sysMsgs.forEach(s => pushMessage(fresh, s));
+  if (fresh.assigned_to && fresh.assigned_to !== prevAssigned && fresh.assigned_to !== user.id) notifyChat(fresh, 'assigned');
   return fresh;
 }
 
