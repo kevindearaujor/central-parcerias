@@ -82,6 +82,7 @@ for (const col of ['prev_stage TEXT', 'ref TEXT', 'avatar_at INTEGER', 'assigned
   try { db.exec(`ALTER TABLE chats ADD COLUMN ${col}`); } catch {}
 }
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS chats_ref ON chats(ref)');
+try { db.exec('ALTER TABLE messages ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0'); } catch {}
 // fila de distribuição: quem recebe lead e em que ordem
 for (const col of ['queue_on INTEGER NOT NULL DEFAULT 1', 'queue_pos INTEGER', 'deleted INTEGER NOT NULL DEFAULT 0']) {
   try { db.exec(`ALTER TABLE users ADD COLUMN ${col}`); } catch {}

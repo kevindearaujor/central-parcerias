@@ -179,7 +179,7 @@ route('GET', '/api/chats', async (req, res, { user, query }) => {
 route('GET', '/api/chats/:id', async (req, res, { user, params, query }) => {
   const chat = requireChat(user, params.id);
   const before = Number(query.get('before')) || Number.MAX_SAFE_INTEGER;
-  const msgs = db.prepare('SELECT * FROM messages WHERE chat_id = ? AND ts < ? ORDER BY ts DESC LIMIT 150').all(chat.id, before).reverse().map(rowMsg);
+  const msgs = db.prepare('SELECT * FROM messages WHERE chat_id = ? AND ts < ? AND hidden = 0 ORDER BY ts DESC LIMIT 150').all(chat.id, before).reverse().map(rowMsg);
   if (!query.get('before')) core.refreshAvatar(chat);
   send(res, 200, { chat: core.present(chat, user), messages: msgs.map(core.presentMsg), hasMore: msgs.length === 150 });
 });
@@ -254,22 +254,54 @@ route('PATCH', '/api/chats/:id', async (req, res, { user, params }) => {
 });
 
 // ---- mídia (baixa da Evolution uma vez e guarda) ----
+// mídia: guardada no servidor e entregue em pedaços (o PDF começa a abrir antes de baixar tudo)
+const mediaInflight = new Map();
+async function ensureMedia(m) {
+  const file = core.mediaFile(m.id);
+  if (fs.existsSync(file)) return file;
+  if (!mediaInflight.has(m.id)) {
+    mediaInflight.set(m.id, (async () => {
+      const r = await evo.getMediaBase64(m.id);
+      if (!r?.base64) return null;
+      fs.writeFileSync(file, Buffer.from(r.base64, 'base64'));
+      if (r.mimetype && !m.mime) db.prepare('UPDATE messages SET mime = ? WHERE id = ?').run(r.mimetype, m.id);
+      return file;
+    })().finally(() => mediaInflight.delete(m.id)));
+  }
+  return mediaInflight.get(m.id);
+}
 route('GET', '/api/media/:id', async (req, res, { user, params }) => {
   const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(params.id);
   if (!m || !core.canSee(user, core.getChat(m.chat_id))) return fail(res, 404, 'Mídia não encontrada');
-  const file = core.mediaFile(params.id);
-  let buf; let mime = m.mime || 'application/octet-stream';
-  if (fs.existsSync(file)) buf = fs.readFileSync(file);
-  else {
-    const r = await evo.getMediaBase64(m.id);
-    if (!r?.base64) return fail(res, 404, 'Mídia indisponível');
-    buf = Buffer.from(r.base64, 'base64');
-    if (r.mimetype) mime = r.mimetype;
-    fs.writeFileSync(file, buf);
+  const file = await ensureMedia(m);
+  if (!file) return fail(res, 404, 'Mídia indisponível');
+  const st = fs.statSync(file);
+  const etag = `"${st.size.toString(36)}-${st.mtimeMs.toString(36)}"`;
+  const headers = { 'Content-Type': (m.mime || 'application/octet-stream').split(';')[0], 'Cache-Control': 'private, max-age=2592000, immutable', ETag: etag, 'Accept-Ranges': 'bytes' };
+  if (m.kind === 'document') headers['Content-Disposition'] = `inline; filename*=UTF-8''${encodeURIComponent(m.file_name || 'arquivo')}`;
+  if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); return res.end(); }
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (range) {
+    let start = range[1] === '' ? st.size - Number(range[2]) : Number(range[1]);
+    let end = range[1] !== '' && range[2] !== '' ? Number(range[2]) : st.size - 1;
+    if (isNaN(start) || start < 0 || start >= st.size || end < start) { res.writeHead(416, { 'Content-Range': `bytes */${st.size}` }); return res.end(); }
+    end = Math.min(end, st.size - 1);
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1 });
+    return fs.createReadStream(file, { start, end }).pipe(res);
   }
-  const headers = { 'Content-Type': mime.split(';')[0], 'Cache-Control': 'private, max-age=86400', 'Content-Length': buf.length };
-  if (m.kind === 'document') headers['Content-Disposition'] = `inline; filename="${encodeURIComponent(m.file_name || 'arquivo')}"`;
-  res.writeHead(200, headers); res.end(buf);
+  res.writeHead(200, { ...headers, 'Content-Length': st.size });
+  fs.createReadStream(file).pipe(res);
+});
+
+route('POST', '/api/chats/:id/messages/:msg/edit', async (req, res, { user, params }) => {
+  const chat = requireChat(user, params.id);
+  const { text } = await readBody(req);
+  send(res, 200, { message: core.presentMsg(await core.editMessage(user, chat, params.msg, text)) });
+});
+route('POST', '/api/chats/:id/messages/:msg/delete', async (req, res, { user, params }) => {
+  const chat = requireChat(user, params.id);
+  const { everyone } = await readBody(req);
+  send(res, 200, { message: core.presentMsg(await core.deleteMessage(user, chat, params.msg, !!everyone)) });
 });
 
 // ---- foto do lead (guardada no servidor) ----

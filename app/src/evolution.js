@@ -90,6 +90,17 @@ async function sendVoice(number, base64) {
   return call('POST', `/message/sendWhatsAppAudio/${enc(INSTANCE)}`, { number, audio: base64, encoding: true });
 }
 
+// Editar texto de mensagem enviada (o WhatsApp permite até 15 minutos depois do envio)
+async function editMessage(remoteJid, id, text) {
+  return call('POST', `/chat/updateMessage/${enc(INSTANCE)}`, {
+    number: remoteJid.split('@')[0], key: { remoteJid, fromMe: true, id }, text,
+  });
+}
+// Apagar para todos
+async function deleteForEveryone(remoteJid, id, fromMe = true) {
+  return call('DELETE', `/chat/deleteMessageForEveryone/${enc(INSTANCE)}`, { id, remoteJid, fromMe });
+}
+
 async function getMediaBase64(messageId) {
   return call('POST', `/chat/getBase64FromMediaMessage/${enc(INSTANCE)}`, {
     message: { key: { id: messageId } }, convertToMp4: false,
@@ -154,5 +165,5 @@ async function markRead(remoteJid, ids) {
 module.exports = {
   INSTANCE, WEBHOOK_URL, EvoError,
   connectionState, createInstance, setWebhook, connect, logout,
-  sendText, sendMedia, sendVoice, getMediaBase64, profilePicture, markRead, ownProfile,
+  sendText, sendMedia, sendVoice, editMessage, deleteForEveryone, getMediaBase64, profilePicture, markRead, ownProfile,
 };

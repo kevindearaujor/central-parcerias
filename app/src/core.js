@@ -579,6 +579,45 @@ async function sendFile(user, chat, { file, size, mime, fileName, caption, baseU
   return m;
 }
 
+// ================= editar / apagar =================
+const EDIT_LIMIT = 15 * 60e3;          // regra do WhatsApp
+const DELETE_LIMIT = 48 * 3600e3;       // apagar para todos: até 2 dias
+function jidFor(chat) { return chat.phone ? `${chat.phone}@s.whatsapp.net` : (chat.lid || chat.id); }
+function err(msg, status = 400) { return Object.assign(new Error(msg), { status }); }
+
+async function editMessage(user, chat, msgId, text) {
+  const m = q.msgById.get(msgId);
+  if (!m || m.chat_id !== chat.id) throw err('Mensagem não encontrada', 404);
+  if (!m.from_me || m.kind !== 'text' || m.deleted) throw err('Só dá para editar mensagens de texto enviadas pela equipe');
+  if (Date.now() - m.ts > EDIT_LIMIT) throw err('O WhatsApp só permite editar até 15 minutos depois do envio');
+  text = String(text || '').trim();
+  if (!text) throw err('A mensagem não pode ficar vazia');
+  await evo.editMessage(jidFor(chat), m.id, text);
+  db.prepare('UPDATE messages SET body = ?, edited = 1 WHERE id = ?').run(text, m.id);
+  const last = db.prepare("SELECT id FROM messages WHERE chat_id = ? AND kind NOT IN ('system','note') ORDER BY ts DESC LIMIT 1").get(chat.id);
+  if (last && last.id === m.id) db.prepare('UPDATE chats SET last_text = ? WHERE id = ?').run(text.slice(0, 200), chat.id);
+  const fresh = getChat(chat.id); pushChat(fresh);
+  const out = rowMsg(q.msgById.get(m.id)); pushMessage(fresh, out);
+  return out;
+}
+
+async function deleteMessage(user, chat, msgId, everyone) {
+  const m = q.msgById.get(msgId);
+  if (!m || m.chat_id !== chat.id) throw err('Mensagem não encontrada', 404);
+  if (everyone) {
+    if (!m.from_me || m.kind === 'system' || m.kind === 'note') throw err('Só dá para apagar para todos as mensagens enviadas pela equipe');
+    if (m.deleted) return rowMsg(m);
+    if (Date.now() - m.ts > DELETE_LIMIT) throw err('O WhatsApp só permite apagar para todos até 2 dias depois do envio');
+    await evo.deleteForEveryone(jidFor(chat), m.id, true);
+    db.prepare("UPDATE messages SET deleted = 1, body = '' WHERE id = ?").run(m.id);
+  } else {
+    db.prepare('UPDATE messages SET hidden = 1 WHERE id = ?').run(m.id);
+  }
+  const fresh = getChat(chat.id); pushChat(fresh);
+  const out = rowMsg(q.msgById.get(m.id)); pushMessage(fresh, out);
+  return out;
+}
+
 async function sendVoice(user, chat, { base64, mime }) {
   const raw = String(base64).replace(/^data:[^,]+,/, '');
   const res = await evo.sendVoice(numberFor(chat), raw);
@@ -700,7 +739,7 @@ function deleteUser(admin, userId, transferTo) {
 module.exports = {
   deleteUser,
   addClient, removeClient, canSee, present, presentMsg, pushChat, pushAll, setWaState, getWaState,
-  sendVoice, mediaFile, sendFile, takeTemp, MEDIA_DIR,
+  sendVoice, mediaFile, sendFile, editMessage, deleteMessage, takeTemp, MEDIA_DIR,
   getChat, getChatByRef, handleWebhook, refreshAvatar, avatarFile, queueState, reassignOverdue, sendText, sendMedia, addNote, updateChat, findOrCreateChat,
   extractContent, resolveJid, toMs,
 };

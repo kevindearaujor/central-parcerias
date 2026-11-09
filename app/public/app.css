@@ -487,3 +487,24 @@ body { overscroll-behavior-y: contain; }
 
 .up-pct { margin-left: auto; color: var(--accent); font-weight: 700; white-space: nowrap; }
 .attach-preview span:first-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- celular: teclado e gestos ---------- */
+@media (max-width: 760px) {
+  html, body, #root, .app { height: var(--app-h, 100dvh); }
+  html, body { overflow: hidden; overscroll-behavior: none; }
+  /* 16px impede o iPhone de dar zoom ao tocar no campo */
+  input, select, textarea, .composer textarea { font-size: 16px; }
+  .app:has(#compose:focus) .rail { display: none; }
+  .chat-pane { will-change: transform; background: var(--chat-bg); }
+}
+/* ---------- menu da mensagem ---------- */
+.msg-menu-btn { position: absolute; top: 3px; right: 3px; width: 24px; height: 24px; border-radius: 6px; border: 0; background: inherit; color: var(--bubble-meta); display: grid; place-items: center; opacity: 0; transition: opacity .12s; padding: 0; }
+.msg-menu-btn svg { width: 16px; height: 16px; }
+.msg:hover .msg-menu-btn, .msg.menu-on .msg-menu-btn { opacity: 1; }
+@media (hover: none) { .msg-menu-btn { display: none; } }
+.msg.menu-on { box-shadow: 0 0 0 2px var(--accent); }
+.msg-pop { position: fixed; z-index: 80; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; min-width: 190px; }
+.msg-pop button { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; padding: 10px 12px; border-radius: 7px; font-size: 14px; text-align: left; }
+.msg-pop button:hover { background: var(--surface-2); }
+.msg-pop button svg { width: 17px; height: 17px; color: var(--muted); flex: none; }
+.msg-pop button.danger, .msg-pop button.danger svg { color: var(--danger); }

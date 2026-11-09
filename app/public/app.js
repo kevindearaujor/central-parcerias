@@ -34,6 +34,7 @@
     archive: P('<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/>'),
     lost: P('<circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/>'),
     mic: P('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
+    chevron: P('<path d="M6 9l6 6 6-6"/>'),
     sun: P('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
     moon: P('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
     queue: P('<path d="M4 6h11M4 12h11M4 18h7"/><path d="M18 9v10M15 16l3 3 3-3"/>'),
@@ -178,6 +179,7 @@
   function onMessageEvent(chatId, m) {
     if (S.current === chatId) {
       const i = S.messages.findIndex(x => x.id === m.id);
+      if (m.hidden) { if (i >= 0) S.messages.splice(i, 1); renderMessages(false); return; }
       if (i >= 0) S.messages[i] = m; else S.messages.push(m);
       renderMessages(i < 0);
       if (!m.from_me && document.visibilityState === 'visible') markRead(chatId);
@@ -598,6 +600,7 @@
         </div>
       </div>`;
     renderChatHead(); renderQueueBar(); if (!loading) renderMessages(true);
+    if (!pane._swipe) { pane._swipe = true; bindSwipeBack(pane); }
     bindComposer();
   }
   function renderChatHead() {
@@ -670,7 +673,8 @@
       else ticks = `<span class="ticks">${I.clock}</span>`;
     }
     const who = m.from_me ? (author ? author.name : 'Pelo celular') : '';
-    return `<div class="msg ${m.from_me ? 'out' : 'in'} ${m.deleted ? 'deleted' : ''}">
+    return `<div class="msg ${m.from_me ? 'out' : 'in'} ${m.deleted ? 'deleted' : ''}" data-mid="${esc(m.id)}">
+      <button class="msg-menu-btn" data-menu="${esc(m.id)}" aria-label="Opções da mensagem">${I.chevron}</button>
       ${m.from_me ? `<div class="author">${esc(who)}</div>` : ''}
       ${media}${body ? `<div class="body">${body}</div>` : ''}
       <div class="foot">${m.edited ? 'editada · ' : ''}${hhmm(m.ts)}${ticks}</div></div>`;
@@ -688,6 +692,7 @@
     if (!S.messages.length) html += '<div class="sys">Nenhuma mensagem ainda</div>';
     el.innerHTML = html;
     const more = $('#more-btn'); if (more) more.onclick = loadMore;
+    bindMessageMenu(el);
     if (scroll || nearBottom) el.scrollTop = el.scrollHeight;
   }
   async function loadMore() {
@@ -754,6 +759,102 @@
       } catch (e) { toast(e.message, true); }
       btn.disabled = false; ta.focus();
     }
+  }
+
+  // ---------- menu da mensagem (editar / apagar) ----------
+  const EDIT_LIMIT = 15 * 60e3, DELETE_LIMIT = 48 * 3600e3;
+  function bindMessageMenu(el) {
+    if (el._menuBound) return; el._menuBound = true;
+    el.addEventListener('click', e => { const b = e.target.closest('[data-menu]'); if (b) { e.stopPropagation(); openMsgMenu(b.dataset.menu, b); } });
+    // celular: segurar o dedo na mensagem abre o menu
+    let t = null, sx = 0, sy = 0;
+    el.addEventListener('touchstart', e => {
+      const bub = e.target.closest('.msg[data-mid]'); if (!bub || e.target.closest('a, audio, video, button')) return;
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+      t = setTimeout(() => { t = null; if (navigator.vibrate) navigator.vibrate(15); openMsgMenu(bub.dataset.mid, bub); }, 450);
+    }, { passive: true });
+    el.addEventListener('touchmove', e => { if (t && (Math.abs(e.touches[0].clientX - sx) > 8 || Math.abs(e.touches[0].clientY - sy) > 8)) { clearTimeout(t); t = null; } }, { passive: true });
+    el.addEventListener('touchend', () => { if (t) { clearTimeout(t); t = null; } });
+    el.addEventListener('contextmenu', e => { if (e.target.closest('.msg[data-mid]') && 'ontouchstart' in window) e.preventDefault(); });
+  }
+  function closeMsgMenu() { document.querySelector('.msg-pop')?.remove(); document.querySelector('.msg.menu-on')?.classList.remove('menu-on'); }
+  function openMsgMenu(id, anchor) {
+    closeMsgMenu();
+    const m = S.messages.find(x => x.id === id); if (!m) return;
+    const age = Date.now() - m.ts;
+    const opts = [];
+    if (m.from_me && m.kind === 'text' && !m.deleted && age < EDIT_LIMIT) opts.push(['edit', I.edit, 'Editar']);
+    if (m.body && !m.deleted) opts.push(['copy', I.doc, 'Copiar texto']);
+    if (m.from_me && !m.deleted && age < DELETE_LIMIT) opts.push(['all', I.trash, 'Apagar para todos', 'danger']);
+    opts.push(['me', I.x, 'Apagar para mim']);
+    const pop = document.createElement('div'); pop.className = 'msg-pop';
+    pop.innerHTML = opts.map(([k, ic, l, c]) => `<button data-act="${k}" class="${c || ''}">${ic}<span>${l}</span></button>`).join('');
+    document.body.appendChild(pop);
+    const bub = anchor.closest('.msg') || anchor; bub.classList.add('menu-on');
+    const r = bub.getBoundingClientRect(); const pw = pop.offsetWidth, ph = pop.offsetHeight;
+    let left = m.from_me ? r.right - pw : r.left; left = Math.max(8, Math.min(left, innerWidth - pw - 8));
+    let top = r.bottom + 6; if (top + ph > innerHeight - 8) top = Math.max(8, r.top - ph - 6);
+    pop.style.left = left + 'px'; pop.style.top = top + 'px';
+    setTimeout(() => document.addEventListener('click', closeMsgMenu, { once: true }), 0);
+    pop.onclick = async e => {
+      const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); closeMsgMenu();
+      const base = `/api/chats/${encodeURIComponent(S.current)}/messages/${encodeURIComponent(m.id)}`;
+      if (b.dataset.act === 'copy') { try { await navigator.clipboard.writeText(m.body); toast('Texto copiado'); } catch { toast('Não consegui copiar', true); } return; }
+      if (b.dataset.act === 'edit') return modal(`<h3>Editar mensagem</h3>
+          <div class="field"><label for="em-text">O cliente vê a mensagem com a marca "Editada".</label><textarea class="input" id="em-text" rows="5">${esc(m.body)}</textarea></div>
+          <div class="form-error" id="em-err"></div>
+          <div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="em-ok">Salvar</button></div>`,
+        (bg, close) => bg.querySelector('#em-ok').onclick = async () => {
+          try { await A.post(base + '/edit', { text: bg.querySelector('#em-text').value }); close(); toast('Mensagem editada'); }
+          catch (err) { bg.querySelector('#em-err').textContent = err.message; }
+        });
+      const all = b.dataset.act === 'all';
+      modal(`<h3>${all ? 'Apagar para todos?' : 'Apagar para mim?'}</h3>
+        <p style="margin:0;color:var(--muted)">${all ? 'A mensagem some do WhatsApp do cliente e fica como "Mensagem apagada".' : 'A mensagem sai da Quero Leads para toda a equipe. No WhatsApp do cliente ela continua.'}</p>
+        <div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="dm-ok" style="background:var(--danger);border-color:var(--danger);color:#fff">Apagar</button></div>`,
+      (bg, close) => bg.querySelector('#dm-ok').onclick = async () => {
+        try { await A.post(base + '/delete', { everyone: all }); close(); toast('Mensagem apagada'); }
+        catch (err) { close(); toast(err.message, true); }
+      });
+    };
+  }
+
+  // ---------- teclado do celular: a tela encolhe em vez de ser empurrada ----------
+  (function keepAppInView() {
+    const vv = window.visualViewport; if (!vv) return;
+    const fit = () => {
+      document.documentElement.style.setProperty('--app-h', `${Math.round(vv.height)}px`);
+      if (window.scrollY || document.documentElement.scrollTop) window.scrollTo(0, 0);
+      const msgs = document.getElementById('messages');
+      if (msgs && document.activeElement && document.activeElement.id === 'compose') msgs.scrollTop = msgs.scrollHeight;
+    };
+    vv.addEventListener('resize', fit); vv.addEventListener('scroll', () => { if (window.scrollY) window.scrollTo(0, 0); });
+    fit();
+  })();
+
+  // ---------- deslizar para voltar (celular) ----------
+  function bindSwipeBack(pane) {
+    if (!('ontouchstart' in window)) return;
+    let sx = 0, sy = 0, dx = 0, on = false, locked = null;
+    pane.addEventListener('touchstart', e => {
+      if (!window.matchMedia('(max-width: 760px)').matches || e.touches.length !== 1 || e.target.closest('textarea, input, .rec-row')) return;
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY; dx = 0; on = true; locked = null; pane.style.transition = 'none';
+    }, { passive: true });
+    pane.addEventListener('touchmove', e => {
+      if (!on) return;
+      const x = e.touches[0].clientX - sx, y = e.touches[0].clientY - sy;
+      if (locked === null && (Math.abs(x) > 10 || Math.abs(y) > 10)) locked = Math.abs(x) > Math.abs(y) * 1.4 && x > 0 ? 'x' : 'y';
+      if (locked !== 'x') return;
+      dx = Math.max(0, x); pane.style.transform = `translateX(${dx}px)`;
+    }, { passive: true });
+    pane.addEventListener('touchend', () => {
+      if (!on) return; on = false;
+      pane.style.transition = 'transform .18s ease-out';
+      if (locked === 'x' && dx > Math.min(120, innerWidth * 0.3)) {
+        pane.style.transform = `translateX(${innerWidth}px)`;
+        setTimeout(() => { pane.style.transform = ''; pane.style.transition = ''; closeChat(); }, 170);
+      } else pane.style.transform = '';
+    });
   }
 
   // envio de arquivo com barra de progresso
