@@ -475,3 +475,14 @@ body { overscroll-behavior-y: contain; }
   .rail-btn svg { width: 26px; height: 26px; }
   .rail-btn .dot { top: 4px; right: 4px; }
 }
+
+/* ---------- gravação de áudio ---------- */
+.rec-row { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); animation: rec-blink 1s ease-in-out infinite; flex: none; }
+.rec-time { font-weight: 700; font-size: 15px; min-width: 42px; }
+.rec-hint { flex: 1; color: var(--muted); font-size: 13px; }
+.rec-row .icon-btn { color: var(--danger); }
+@keyframes rec-blink { 50% { opacity: .25; } }
+
+.up-pct { margin-left: auto; color: var(--accent); font-weight: 700; white-space: nowrap; }
+.attach-preview span:first-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -202,12 +202,40 @@ route('POST', '/api/chats/:id/send', async (req, res, { user, params }) => {
   send(res, 200, { message: core.presentMsg(msg) });
 });
 
+// Envio de arquivo em binário puro (aceita até 100 MB)
+const MAX_UPLOAD = 100 * 1024 * 1024;
+route('POST', '/api/chats/:id/upload', async (req, res, { user, params, query }) => {
+  const chat = requireChat(user, params.id);
+  const len = Number(req.headers['content-length'] || 0);
+  if (len > MAX_UPLOAD) return fail(res, 413, 'Arquivo acima de 100 MB');
+  const tmp = path.join(core.MEDIA_DIR, `up_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`);
+  const size = await new Promise((resolve, reject) => {
+    let n = 0; const out = fs.createWriteStream(tmp);
+    req.on('data', c => { n += c.length; if (n > MAX_UPLOAD) { req.destroy(); out.destroy(); reject(Object.assign(new Error('Arquivo acima de 100 MB'), { status: 413 })); } });
+    req.pipe(out); out.on('finish', () => resolve(n)); out.on('error', reject); req.on('error', reject);
+  }).catch(e => { try { fs.unlinkSync(tmp); } catch {} throw e; });
+  if (!size) { try { fs.unlinkSync(tmp); } catch {} return fail(res, 400, 'Arquivo vazio'); }
+  const fileName = String(query.get('name') || 'arquivo').slice(0, 200);
+  const caption = String(query.get('caption') || '').slice(0, 1000);
+  try {
+    const msg = await core.sendFile(user, chat, { file: tmp, size, mime: req.headers['content-type'], fileName, caption });
+    send(res, 200, { message: core.presentMsg(msg) });
+  } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
+});
+
 route('POST', '/api/chats/:id/media', async (req, res, { user, params }) => {
   const chat = requireChat(user, params.id);
   const { base64, mime, fileName, caption } = await readBody(req);
   if (!base64 || !mime) return fail(res, 400, 'Arquivo inválido');
   const msg = await core.sendMedia(user, chat, { base64: String(base64).replace(/^data:[^,]+,/, ''), mime, fileName: fileName || 'arquivo', caption });
   send(res, 200, { message: core.presentMsg(msg) });
+});
+
+route('POST', '/api/chats/:id/audio', async (req, res, { user, params }) => {
+  const chat = requireChat(user, params.id);
+  const { base64, mime } = await readBody(req);
+  if (!base64) return fail(res, 400, 'Áudio vazio');
+  send(res, 200, { message: core.presentMsg(await core.sendVoice(user, chat, { base64, mime })) });
 });
 
 route('POST', '/api/chats/:id/note', async (req, res, { user, params }) => {
@@ -227,8 +255,7 @@ route('PATCH', '/api/chats/:id', async (req, res, { user, params }) => {
 route('GET', '/api/media/:id', async (req, res, { user, params }) => {
   const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(params.id);
   if (!m || !core.canSee(user, core.getChat(m.chat_id))) return fail(res, 404, 'Mídia não encontrada');
-  const safe = params.id.replace(/[^\w-]/g, '_');
-  const file = path.join(MEDIA_DIR, safe);
+  const file = core.mediaFile(params.id);
   let buf; let mime = m.mime || 'application/octet-stream';
   if (fs.existsSync(file)) buf = fs.readFileSync(file);
   else {
@@ -467,11 +494,19 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && pathname.startsWith('/webhook/')) {
     const tok = pathname.slice('/webhook/'.length).split('/')[0];
     if (!WEBHOOK_SECRET || tok !== WEBHOOK_SECRET) return fail(res, 403, 'Proibido');
-    try { const body = await readBody(req, 60 * 1024 * 1024); core.handleWebhook(body); } catch (e) { console.error('[webhook]', e.message); }
+    try { const body = await readBody(req, 160 * 1024 * 1024); core.handleWebhook(body); } catch (e) { console.error('[webhook]', e.message); }
     return send(res, 200, { ok: true });
   }
 
   if (pathname === '/health') return send(res, 200, { ok: true });
+
+  // endereço temporário para o WhatsApp buscar um arquivo enviado (rede interna, token de uso único)
+  if (req.method === 'GET' && pathname.startsWith('/interno/arquivo/')) {
+    const t = core.takeTemp(pathname.split('/').pop());
+    if (!t || !fs.existsSync(t.file)) return fail(res, 404, 'Não encontrado');
+    res.writeHead(200, { 'Content-Type': t.mime, 'Content-Length': fs.statSync(t.file).size, 'Content-Disposition': `attachment; filename="${encodeURIComponent(t.name)}"` });
+    return fs.createReadStream(t.file).pipe(res);
+  }
 
   if (pathname.startsWith('/api/')) {
     for (const r of routes) {

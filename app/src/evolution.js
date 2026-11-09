@@ -54,13 +54,13 @@ async function createInstance() {
     readMessages: false,
     readStatus: false,
     syncFullHistory: false,
-    webhook: { url: WEBHOOK_URL, byEvents: false, base64: false, events: WEBHOOK_EVENTS },
+    webhook: { url: WEBHOOK_URL, byEvents: false, base64: true, events: WEBHOOK_EVENTS },
   });
 }
 
 async function setWebhook() {
   return call('POST', `/webhook/set/${enc(INSTANCE)}`, {
-    webhook: { enabled: true, url: WEBHOOK_URL, byEvents: false, base64: false, events: WEBHOOK_EVENTS },
+    webhook: { enabled: true, url: WEBHOOK_URL, byEvents: false, base64: true, events: WEBHOOK_EVENTS },
   });
 }
 
@@ -82,6 +82,11 @@ async function sendMedia(number, { mediatype, mimetype, base64, fileName, captio
   return call('POST', `/message/sendMedia/${enc(INSTANCE)}`, {
     number, mediatype, mimetype, media: base64, fileName, caption: caption || '',
   });
+}
+
+// Áudio de voz (aparece para o cliente como áudio gravado, não como arquivo)
+async function sendVoice(number, base64) {
+  return call('POST', `/message/sendWhatsAppAudio/${enc(INSTANCE)}`, { number, audio: base64, encoding: true });
 }
 
 async function getMediaBase64(messageId) {
@@ -148,5 +153,5 @@ async function markRead(remoteJid, ids) {
 module.exports = {
   INSTANCE, WEBHOOK_URL, EvoError,
   connectionState, createInstance, setWebhook, connect, logout,
-  sendText, sendMedia, getMediaBase64, profilePicture, markRead, ownProfile,
+  sendText, sendMedia, sendVoice, getMediaBase64, profilePicture, markRead, ownProfile,
 };

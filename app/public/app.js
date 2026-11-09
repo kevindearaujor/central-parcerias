@@ -33,6 +33,7 @@
     warn: P('<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'),
     archive: P('<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/>'),
     lost: P('<circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/>'),
+    mic: P('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
     sun: P('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
     moon: P('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
     queue: P('<path d="M4 6h11M4 12h11M4 18h7"/><path d="M18 9v10M15 16l3 3 3-3"/>'),
@@ -547,6 +548,7 @@
     S.current = id;
     $('#inbox')?.classList.add('has-chat');
     document.querySelectorAll('.chat-item').forEach(el => el.classList.toggle('active', el.dataset.chat === id));
+    if (changed) cancelRecording();
     if (changed || !keep) { S.messages = []; renderChatPane(true); }
     try {
       const r = await A.get(`/api/chats/${encodeURIComponent(id)}`);
@@ -586,6 +588,13 @@
           <input type="file" id="file-in" hidden>
           <textarea id="compose" rows="1" placeholder="Digite uma mensagem. Use / para respostas rápidas"></textarea>
           <button class="send-btn" id="send-btn" type="button" aria-label="Enviar">${I.send}</button>
+          <button class="send-btn mic-btn" id="mic-btn" type="button" aria-label="Gravar áudio" title="Gravar áudio">${I.mic}</button>
+        </div>
+        <div class="rec-row" id="rec-row" hidden>
+          <button class="icon-btn" id="rec-cancel" type="button" aria-label="Descartar áudio" title="Descartar">${I.trash}</button>
+          <span class="rec-dot"></span><span class="rec-time num" id="rec-time">0:00</span>
+          <span class="rec-hint">Gravando…</span>
+          <button class="send-btn" id="rec-send" type="button" aria-label="Enviar áudio">${I.send}</button>
         </div>
       </div>`;
     renderChatHead(); renderQueueBar(); if (!loading) renderMessages(true);
@@ -692,7 +701,10 @@
   let pendingFile = null;
   function bindComposer() {
     const ta = $('#compose'); const pop = $('#qr-pop'); let sel = 0; let items = [];
-    const autosize = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'; };
+    const autosize = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'; toggleMic(); };
+    // microfone no lugar do enviar quando a caixa está vazia (igual ao WhatsApp)
+    const toggleMic = () => { const empty = !ta.value.trim() && !pendingFile; $('#send-btn').hidden = empty; $('#mic-btn').hidden = !empty; };
+    bindRecorder(toggleMic);
     const draftKey = 'draft:' + S.current;
     ta.value = store.get(draftKey, ''); autosize();
     const showQr = () => {
@@ -722,29 +734,84 @@
     $('#file-in').onchange = e => {
       const f = e.target.files[0]; e.target.value = '';
       if (!f) return;
-      if (f.size > 16 * 1024 * 1024) return toast('Arquivo acima de 16 MB', true);
-      const rd = new FileReader();
-      rd.onload = () => {
-        pendingFile = { base64: rd.result, mime: f.type || 'application/octet-stream', fileName: f.name };
-        const ap = $('#attach-preview'); ap.hidden = false;
-        ap.innerHTML = `${I.doc}<span>${esc(f.name)}</span><button class="icon-btn" id="rm-file" aria-label="Remover anexo">${I.x}</button>`;
-        $('#rm-file').onclick = () => { pendingFile = null; ap.hidden = true; };
-        ta.placeholder = 'Legenda (opcional)'; ta.focus();
-      };
-      rd.readAsDataURL(f);
+      if (f.size > 100 * 1024 * 1024) return toast('Arquivo acima de 100 MB. Compacte ou divida antes de enviar.', true);
+      pendingFile = f;
+      const mb = (f.size / 1048576).toFixed(1).replace('.', ',');
+      const big = f.size > 16 * 1024 * 1024 && /^(image|video|audio)\//.test(f.type);
+      const ap = $('#attach-preview'); ap.hidden = false;
+      ap.innerHTML = `${I.doc}<span>${esc(f.name)} · ${mb} MB${big ? ' · vai como documento' : ''}</span><span class="up-pct num" id="up-pct"></span><button class="icon-btn" id="rm-file" aria-label="Remover anexo">${I.x}</button>`;
+      $('#rm-file').onclick = () => { pendingFile = null; ap.hidden = true; toggleMic(); };
+      ta.placeholder = 'Legenda (opcional)'; ta.focus(); toggleMic();
     };
     async function doSend() {
       const text = ta.value.trim(); const id = S.current;
       if (!text && !pendingFile) return;
       const btn = $('#send-btn'); btn.disabled = true;
       try {
-        if (pendingFile) { await A.post(`/api/chats/${encodeURIComponent(id)}/media`, { ...pendingFile, caption: text }); pendingFile = null; $('#attach-preview').hidden = true; }
+        if (pendingFile) { await uploadFile(id, pendingFile, text); pendingFile = null; $('#attach-preview').hidden = true; }
         else await A.post(`/api/chats/${encodeURIComponent(id)}/send`, { text });
         ta.value = ''; store.set(draftKey, ''); autosize(); pop.hidden = true;
       } catch (e) { toast(e.message, true); }
       btn.disabled = false; ta.focus();
     }
   }
+
+  // envio de arquivo com barra de progresso
+  function uploadFile(chatId, file, caption) {
+    if (DEMO) return A.post(`/api/chats/${encodeURIComponent(chatId)}/media`, { base64: '', mime: file.type || 'application/octet-stream', fileName: file.name, caption });
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      const q = `name=${encodeURIComponent(file.name)}&caption=${encodeURIComponent(caption || '')}`;
+      x.open('POST', `/api/chats/${encodeURIComponent(chatId)}/upload?${q}`);
+      x.setRequestHeader('X-Requested-With', 'plataforma');
+      x.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      x.upload.onprogress = e => { const el = $('#up-pct'); if (el && e.lengthComputable) el.textContent = e.loaded < e.total ? `${Math.round((e.loaded / e.total) * 100)}%` : 'Enviando ao WhatsApp…'; };
+      x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch {} x.status < 300 ? resolve(d) : reject(new Error(d.error || 'O arquivo não foi enviado')); };
+      x.onerror = () => reject(new Error('Falha de conexão no envio'));
+      x.send(file);
+    });
+  }
+
+  // ---------- gravação de áudio ----------
+  let rec = null;
+  function bindRecorder(toggleMic) {
+    const micBtn = $('#mic-btn'); const row = $('#rec-row'); const main = $('#composer .composer-row');
+    const supported = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+    if (!supported) { micBtn.onclick = () => toast('Este navegador não grava áudio. Use o Chrome ou o Safari atualizados.', true); return; }
+    const pickMime = () => ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm'].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+    const stopAll = () => { if (rec) { clearInterval(rec.timer); rec.stream.getTracks().forEach(t => t.stop()); } };
+    const showRec = (on) => { row.hidden = !on; main.hidden = on; if (!on) toggleMic(); };
+    micBtn.onclick = async () => {
+      if (DEMO) return toast('Na demonstração não dá para gravar. Na plataforma real, o áudio vai para o cliente como mensagem de voz.');
+      let stream;
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+      catch { return toast('Sem acesso ao microfone. Libere o microfone para a Quero Leads nas configurações do navegador ou do celular.', true); }
+      const mime = pickMime();
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const chunks = []; const start = Date.now();
+      rec = { mr, stream, chunks, start, chatId: S.current, send: false };
+      mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      mr.onstop = async () => {
+        const r = rec; stopAll(); rec = null; showRec(false);
+        if (!r || !r.send) return;
+        const blob = new Blob(r.chunks, { type: mr.mimeType || mime || 'audio/webm' });
+        if (Date.now() - r.start < 800 || blob.size < 1000) return toast('Áudio muito curto', true);
+        const b64 = await new Promise(ok => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.readAsDataURL(blob); });
+        try { await A.post(`/api/chats/${encodeURIComponent(r.chatId)}/audio`, { base64: b64, mime: blob.type }); }
+        catch (e) { toast('O áudio não foi enviado: ' + e.message, true); }
+      };
+      mr.start(250);
+      rec.timer = setInterval(() => {
+        const sec = Math.floor((Date.now() - start) / 1000);
+        const t = $('#rec-time'); if (t) t.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+        if (sec >= 600) { rec.send = true; mr.stop(); } // limite de 10 minutos
+      }, 250);
+      showRec(true);
+    };
+    $('#rec-cancel').onclick = () => { if (rec) { rec.send = false; rec.mr.stop(); } };
+    $('#rec-send').onclick = () => { if (rec) { rec.send = true; rec.mr.stop(); } };
+  }
+  function cancelRecording() { if (rec) { rec.send = false; try { rec.mr.stop(); } catch {} } }
 
   // ---------- ficha do lead ----------
   // Ficha do lead: na tela larga fica fixa ao lado (e o X esconde); na estreita abre por cima

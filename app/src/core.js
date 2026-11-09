@@ -233,6 +233,18 @@ function onNewLead(chat) {
 // ================= foto de perfil =================
 // O link da foto do WhatsApp expira em alguns dias, então a foto é baixada e guardada aqui.
 const AVATAR_DIR = path.join(DATA_DIR, 'avatars');
+const MEDIA_DIR = path.join(DATA_DIR, 'media');
+fs.mkdirSync(MEDIA_DIR, { recursive: true });
+function mediaFile(id) { return path.join(MEDIA_DIR, String(id).replace(/[^\w-]/g, '_')); }
+// guarda a mídia que veio junto no aviso do WhatsApp (evita depender de baixar depois)
+function saveIncomingMedia(id, data) {
+  try {
+    const b64 = data?.message?.base64 || data?.base64;
+    if (!b64 || typeof b64 !== 'string') return;
+    const file = mediaFile(id);
+    if (!fs.existsSync(file)) fs.writeFileSync(file, Buffer.from(b64.replace(/^data:[^,]+,/, ''), 'base64'));
+  } catch (e) { console.warn('[mídia]', e.message); }
+}
 fs.mkdirSync(AVATAR_DIR, { recursive: true });
 const AVATAR_TTL = 24 * 3600e3;
 function avatarFile(ref) { return path.join(AVATAR_DIR, `${String(ref).replace(/[^\w-]/g, '_')}.jpg`); }
@@ -413,6 +425,7 @@ function handleUpsert(data) {
   const { chat, created } = findOrCreateChat({ jid: r.jid, lid: r.lid, pushName: data.pushName, fromMe, ad, ts });
 
   const status = data.status || (fromMe ? 'SERVER_ACK' : null);
+  if (['image', 'video', 'audio', 'document', 'sticker'].includes(content.kind)) saveIncomingMedia(key.id, data);
   const { msg, isNew } = storeMessage({
     chat, id: key.id, fromMe, kind: content.kind, body: content.body,
     mime: content.mime, fileName: content.fileName, ts, status,
@@ -514,6 +527,60 @@ async function sendMedia(user, chat, { base64, mime, fileName, caption }) {
   const ts = res?.messageTimestamp ? toMs(res.messageTimestamp) : Date.now();
   storeMessage({ chat, id, fromMe: true, kind: mediatype, body: caption || '', mime, fileName, ts, status: res?.status || 'PENDING', authorId: user.id });
   db.prepare('UPDATE messages SET author_id = COALESCE(author_id, ?) WHERE id = ?').run(user.id, id);
+  claimIfQueue(user, chat);
+  const fresh = getChat(chat.id);
+  pushChat(fresh);
+  const m = rowMsg(q.msgById.get(id));
+  pushMessage(fresh, m);
+  return m;
+}
+
+// Arquivo grande: o WhatsApp busca o arquivo num endereço interno temporário (sem passar tudo pelo JSON)
+const MAX_MEDIA = 16 * 1024 * 1024;       // fotos e vídeos acima disso vão como documento
+const temp = new Map();                     // token -> { file, mime, name, exp }
+function tempUrl(file, mime, name) {
+  const token = require('node:crypto').randomBytes(24).toString('base64url');
+  temp.set(token, { file, mime, name, exp: Date.now() + 15 * 60e3 });
+  const base = new URL(evo.WEBHOOK_URL).origin;
+  return { token, url: `${base}/interno/arquivo/${token}` };
+}
+function takeTemp(token) {
+  const t = temp.get(token);
+  if (!t || t.exp < Date.now()) { temp.delete(token); return null; }
+  return t;
+}
+setInterval(() => { for (const [k, t] of temp) if (t.exp < Date.now()) temp.delete(k); }, 60e3);
+
+async function sendFile(user, chat, { file, size, mime, fileName, caption }) {
+  mime = (mime || 'application/octet-stream').split(';')[0];
+  let mediatype = mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'document';
+  if ((mediatype === 'image' || mediatype === 'video' || mediatype === 'audio') && size > MAX_MEDIA) mediatype = 'document';
+  const { token, url } = tempUrl(file, mime, fileName);
+  let res;
+  try { res = await evo.sendMedia(numberFor(chat), { mediatype, mimetype: mime, base64: url, fileName, caption }); }
+  finally { temp.delete(token); }
+  const id = res?.key?.id || `out_${Date.now()}`;
+  const ts = res?.messageTimestamp ? toMs(res.messageTimestamp) : Date.now();
+  try { fs.renameSync(file, mediaFile(id)); } catch { try { fs.unlinkSync(file); } catch {} }
+  storeMessage({ chat, id, fromMe: true, kind: mediatype, body: caption || '', mime, fileName, ts, status: res?.status || 'PENDING', authorId: user.id });
+  db.prepare('UPDATE messages SET author_id = COALESCE(author_id, ?) WHERE id = ?').run(user.id, id);
+  claimIfQueue(user, chat);
+  const fresh = getChat(chat.id);
+  pushChat(fresh);
+  const m = rowMsg(q.msgById.get(id));
+  pushMessage(fresh, m);
+  return m;
+}
+
+async function sendVoice(user, chat, { base64, mime }) {
+  const raw = String(base64).replace(/^data:[^,]+,/, '');
+  const res = await evo.sendVoice(numberFor(chat), raw);
+  const id = res?.key?.id || `out_${Date.now()}`;
+  const ts = res?.messageTimestamp ? toMs(res.messageTimestamp) : Date.now();
+  // guarda a gravação original para tocar na hora dentro da plataforma
+  try { fs.writeFileSync(mediaFile(id), Buffer.from(raw, 'base64')); } catch {}
+  storeMessage({ chat, id, fromMe: true, kind: 'audio', body: '', mime: (mime || 'audio/webm').split(';')[0], fileName: null, ts, status: res?.status || 'PENDING', authorId: user.id });
+  db.prepare('UPDATE messages SET author_id = COALESCE(author_id, ?), mime = ? WHERE id = ?').run(user.id, (mime || 'audio/webm').split(';')[0], id);
   claimIfQueue(user, chat);
   const fresh = getChat(chat.id);
   pushChat(fresh);
@@ -626,6 +693,7 @@ function deleteUser(admin, userId, transferTo) {
 module.exports = {
   deleteUser,
   addClient, removeClient, canSee, present, presentMsg, pushChat, pushAll, setWaState, getWaState,
+  sendVoice, mediaFile, sendFile, takeTemp, MEDIA_DIR,
   getChat, getChatByRef, handleWebhook, refreshAvatar, avatarFile, queueState, reassignOverdue, sendText, sendMedia, addNote, updateChat, findOrCreateChat,
   extractContent, resolveJid, toMs,
 };
