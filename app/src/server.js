@@ -56,14 +56,16 @@ function setSession(req, res, token, maxAge) {
   res.setHeader('Set-Cookie', `sid=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`);
 }
 
-// limite simples de tentativas de login
+// limite de tentativas: por aparelho + usuário (um erro de uma pessoa não trava as outras)
 const attempts = new Map();
-function tooMany(ip) {
+const MAX_TRIES = 8;
+function triesFor(key) {
   const now = Date.now();
-  const a = (attempts.get(ip) || []).filter(t => now - t < 15 * 60e3);
-  attempts.set(ip, a);
-  return a.length >= 10;
+  const a = (attempts.get(key) || []).filter(t => now - t < 15 * 60e3);
+  attempts.set(key, a);
+  return a;
 }
+function clearTries(login) { for (const k of attempts.keys()) if (k.endsWith('|' + login)) attempts.delete(k); }
 
 // ================= utilitários http =================
 function send(res, status, data, headers = {}) {
@@ -119,14 +121,24 @@ function adminOnly(user) { if (user.role !== 'admin') throw Object.assign(new Er
 
 // ---- login ----
 route('POST', '/api/login', async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
-  if (tooMany(ip)) return fail(res, 429, 'Muitas tentativas. Aguarde 15 minutos.');
+  const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
   const { email, password } = await readBody(req);
-  const u = db.prepare('SELECT * FROM users WHERE email = ? AND active = 1').get(String(email || '').toLowerCase().trim());
-  if (!u || !checkPassword(password, u.pass)) {
-    attempts.get(ip).push(Date.now());
-    return fail(res, 401, 'Usuário ou senha incorretos');
+  const login = String(email || '').toLowerCase().trim();
+  const key = `${ip}|${login}`;
+  const tries = triesFor(key);
+  if (tries.length >= MAX_TRIES) {
+    const wait = Math.max(1, Math.ceil((tries[0] + 15 * 60e3 - Date.now()) / 60e3));
+    return fail(res, 429, `Muitas tentativas com esse usuário. Tente de novo em ${wait} min, ou peça ao administrador uma senha nova.`);
   }
+  const u = db.prepare('SELECT * FROM users WHERE email = ? AND active = 1 AND deleted = 0').get(login);
+  // aceita a senha mesmo com espaço sobrando no começo ou no fim (comum no corretor do celular)
+  const ok = u && (checkPassword(password, u.pass) || checkPassword(String(password || '').trim(), u.pass));
+  if (!ok) {
+    tries.push(Date.now());
+    const left = MAX_TRIES - tries.length;
+    return fail(res, 401, left > 0 && left <= 3 ? `Usuário ou senha incorretos. Restam ${left} ${left === 1 ? 'tentativa' : 'tentativas'}.` : 'Usuário ou senha incorretos');
+  }
+  attempts.delete(key);
   setSession(req, res, makeToken(u.id), SESSION_DAYS * 86400);
   send(res, 200, { user: publicUser(u) });
 }, { public: true });
@@ -392,6 +404,8 @@ route('PATCH', '/api/users/:id', async (req, res, { user, params }) => {
   if (body.password) {
     if (String(body.password).length < 6) return fail(res, 400, 'Senha com mínimo de 6 caracteres');
     sets.push('pass = ?'); vals.push(hashPassword(body.password));
+    const target = db.prepare('SELECT email FROM users WHERE id = ?').get(id);
+    if (target) clearTries(target.email); // senha nova destrava o login na hora
   }
   if (user.role === 'admin' && body.username !== undefined) {
     const login = String(body.username).toLowerCase().trim();

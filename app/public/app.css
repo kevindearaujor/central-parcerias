@@ -508,3 +508,7 @@ body { overscroll-behavior-y: contain; }
 .msg-pop button:hover { background: var(--surface-2); }
 .msg-pop button svg { width: 17px; height: 17px; color: var(--muted); flex: none; }
 .msg-pop button.danger, .msg-pop button.danger svg { color: var(--danger); }
+
+.pass-wrap { position: relative; }
+.pass-wrap .input { padding-right: 46px; }
+.pass-wrap .icon-btn { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); }

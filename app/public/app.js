@@ -34,6 +34,8 @@
     archive: P('<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/>'),
     lost: P('<circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/>'),
     mic: P('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
+    eye: P('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+    eyeOff: P('<path d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'),
     chevron: P('<path d="M6 9l6 6 6-6"/>'),
     sun: P('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
     moon: P('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
@@ -397,7 +399,7 @@
           </div>
           <p>Entre com o usuário e a senha que o administrador cadastrou para você.</p>
           <div class="field"><label for="lg-email">Usuário</label><input class="input" id="lg-email" type="text" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></div>
-          <div class="field"><label for="lg-pass">Senha</label><input class="input" id="lg-pass" type="password" autocomplete="current-password" required></div>
+          <div class="field"><label for="lg-pass">Senha</label><div class="pass-wrap"><input class="input" id="lg-pass" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" required><button type="button" class="icon-btn" id="lg-eye" aria-label="Mostrar senha" title="Mostrar senha">${I.eye}</button></div></div>
           <div class="form-error" id="lg-err"></div>
           <button class="btn primary" type="submit">Entrar</button>
         </form>
@@ -410,6 +412,7 @@
         S.me = null; boot();
       } catch (err) { $('#lg-err').textContent = err.message; btn.disabled = false; }
     });
+    $('#lg-eye').onclick = () => { const i = $('#lg-pass'); const show = i.type === 'password'; i.type = show ? 'text' : 'password'; $('#lg-eye').innerHTML = show ? I.eyeOff : I.eye; $('#lg-eye').setAttribute('aria-label', show ? 'Esconder senha' : 'Mostrar senha'); };
     $('#lg-email').focus();
   }
 
