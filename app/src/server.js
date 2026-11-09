@@ -218,7 +218,9 @@ route('POST', '/api/chats/:id/upload', async (req, res, { user, params, query })
   const fileName = String(query.get('name') || 'arquivo').slice(0, 200);
   const caption = String(query.get('caption') || '').slice(0, 1000);
   try {
-    const msg = await core.sendFile(user, chat, { file: tmp, size, mime: req.headers['content-type'], fileName, caption });
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    const baseUrl = host && host.includes('.') ? `https://${host}` : null;
+    const msg = await core.sendFile(user, chat, { file: tmp, size, mime: req.headers['content-type'], fileName, caption, baseUrl });
     send(res, 200, { message: core.presentMsg(msg) });
   } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
 });
@@ -502,7 +504,7 @@ const server = http.createServer(async (req, res) => {
 
   // endereço temporário para o WhatsApp buscar um arquivo enviado (rede interna, token de uso único)
   if (req.method === 'GET' && pathname.startsWith('/interno/arquivo/')) {
-    const t = core.takeTemp(pathname.split('/').pop());
+    const t = core.takeTemp(pathname.split('/')[3]);
     if (!t || !fs.existsSync(t.file)) return fail(res, 404, 'Não encontrado');
     res.writeHead(200, { 'Content-Type': t.mime, 'Content-Length': fs.statSync(t.file).size, 'Content-Disposition': `attachment; filename="${encodeURIComponent(t.name)}"` });
     return fs.createReadStream(t.file).pipe(res);

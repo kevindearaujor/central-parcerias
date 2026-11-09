@@ -18,12 +18,12 @@ class EvoError extends Error {
   }
 }
 
-async function call(method, path, body) {
+async function call(method, path, body, timeoutMs = 30000) {
   const res = await fetch(BASE + path, {
     method,
     headers: { 'Content-Type': 'application/json', apikey: KEY },
     body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const text = await res.text();
   let data = text;
@@ -79,9 +79,10 @@ async function sendText(number, text) {
 }
 
 async function sendMedia(number, { mediatype, mimetype, base64, fileName, caption }) {
+  // arquivos grandes demoram para subir ao WhatsApp: espera até 5 minutos
   return call('POST', `/message/sendMedia/${enc(INSTANCE)}`, {
     number, mediatype, mimetype, media: base64, fileName, caption: caption || '',
-  });
+  }, 5 * 60e3);
 }
 
 // Áudio de voz (aparece para o cliente como áudio gravado, não como arquivo)

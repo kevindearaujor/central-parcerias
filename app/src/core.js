@@ -538,11 +538,12 @@ async function sendMedia(user, chat, { base64, mime, fileName, caption }) {
 // Arquivo grande: o WhatsApp busca o arquivo num endereço interno temporário (sem passar tudo pelo JSON)
 const MAX_MEDIA = 16 * 1024 * 1024;       // fotos e vídeos acima disso vão como documento
 const temp = new Map();                     // token -> { file, mime, name, exp }
-function tempUrl(file, mime, name) {
+// O endereço precisa ser o público (com .com.br): a ponte do WhatsApp não aceita endereços internos sem domínio
+function tempUrl(file, mime, name, baseUrl) {
   const token = require('node:crypto').randomBytes(24).toString('base64url');
   temp.set(token, { file, mime, name, exp: Date.now() + 15 * 60e3 });
-  const base = new URL(evo.WEBHOOK_URL).origin;
-  return { token, url: `${base}/interno/arquivo/${token}` };
+  const base = baseUrl || new URL(evo.WEBHOOK_URL).origin;
+  return { token, url: `${base}/interno/arquivo/${token}/${encodeURIComponent(name || 'arquivo')}` };
 }
 function takeTemp(token) {
   const t = temp.get(token);
@@ -551,13 +552,19 @@ function takeTemp(token) {
 }
 setInterval(() => { for (const [k, t] of temp) if (t.exp < Date.now()) temp.delete(k); }, 60e3);
 
-async function sendFile(user, chat, { file, size, mime, fileName, caption }) {
+async function sendFile(user, chat, { file, size, mime, fileName, caption, baseUrl }) {
   mime = (mime || 'application/octet-stream').split(';')[0];
   let mediatype = mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'document';
   if ((mediatype === 'image' || mediatype === 'video' || mediatype === 'audio') && size > MAX_MEDIA) mediatype = 'document';
-  const { token, url } = tempUrl(file, mime, fileName);
+  const { token, url } = tempUrl(file, mime, fileName, baseUrl);
   let res;
   try { res = await evo.sendMedia(numberFor(chat), { mediatype, mimetype: mime, base64: url, fileName, caption }); }
+  catch (e) {
+    // plano B: se a ponte recusar o endereço, manda o arquivo direto (até 40 MB)
+    if (!(e instanceof evo.EvoError) || size > 40 * 1024 * 1024) throw e;
+    console.warn('[arquivo] envio por endereço recusado, tentando direto:', e.message.slice(0, 200));
+    res = await evo.sendMedia(numberFor(chat), { mediatype, mimetype: mime, base64: fs.readFileSync(file).toString('base64'), fileName, caption });
+  }
   finally { temp.delete(token); }
   const id = res?.key?.id || `out_${Date.now()}`;
   const ts = res?.messageTimestamp ? toMs(res.messageTimestamp) : Date.now();
