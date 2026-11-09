@@ -208,9 +208,9 @@ route('POST', '/api/chats/:id/read', async (req, res, { user, params }) => {
 
 route('POST', '/api/chats/:id/send', async (req, res, { user, params }) => {
   const chat = requireChat(user, params.id);
-  const { text } = await readBody(req);
+  const { text, replyTo } = await readBody(req);
   if (!String(text || '').trim()) return fail(res, 400, 'Mensagem vazia');
-  const msg = await core.sendText(user, chat, String(text).slice(0, 4000));
+  const msg = await core.sendText(user, chat, String(text).slice(0, 4000), replyTo ? String(replyTo) : null);
   send(res, 200, { message: core.presentMsg(msg) });
 });
 

@@ -426,10 +426,20 @@ function handleUpsert(data) {
 
   const status = data.status || (fromMe ? 'SERVER_ACK' : null);
   if (['image', 'video', 'audio', 'document', 'sticker'].includes(content.kind)) saveIncomingMedia(key.id, data);
-  const { msg, isNew } = storeMessage({
+  const { msg: msg0, isNew } = storeMessage({
     chat, id: key.id, fromMe, kind: content.kind, body: content.body,
     mime: content.mime, fileName: content.fileName, ts, status,
   });
+  let msg = msg0;
+  // cliente respondeu citando uma mensagem
+  const rid = content.ctx?.stanzaId;
+  if (isNew && rid) {
+    const orig = q.msgById.get(rid);
+    const qt = orig ? replySnippet(orig) : (extractContent(content.ctx.quotedMessage).body || 'Mensagem');
+    const rfm = orig ? orig.from_me : (content.ctx.participant ? 0 : 1);
+    db.prepare('UPDATE messages SET reply_id = ?, reply_text = ?, reply_from_me = ? WHERE id = ?').run(rid, String(qt).slice(0, 300), rfm ? 1 : 0, key.id);
+    msg = rowMsg(q.msgById.get(key.id));
+  }
   if (!isNew) return;
 
   const sys = created && !fromMe ? onNewLead(chat) : [];
@@ -506,12 +516,24 @@ function handleWebhook(body) {
 // ================= ações da equipe =================
 function numberFor(chat) { return chat.phone || chat.id; }
 
-async function sendText(user, chat, text) {
-  const res = await evo.sendText(numberFor(chat), text);
+function replySnippet(m) {
+  if (!m) return '';
+  if (m.deleted) return 'Mensagem apagada';
+  const tag = { image: '📷 Foto', video: '🎥 Vídeo', audio: '🎤 Áudio', document: '📄 ' + (m.file_name || 'Documento'), sticker: 'Figurinha', location: '📍 Localização', contact: '👤 Contato' }[m.kind];
+  return String(m.body ? (tag && m.kind !== 'document' ? `${tag} · ${m.body}` : m.body) : (tag || '')).slice(0, 300);
+}
+async function sendText(user, chat, text, replyId) {
+  let quoted = null;
+  const orig = replyId ? q.msgById.get(replyId) : null;
+  if (orig && orig.chat_id === chat.id && !['system', 'note'].includes(orig.kind)) {
+    quoted = { id: orig.id, remoteJid: chat.phone ? `${chat.phone}@s.whatsapp.net` : (chat.lid || chat.id), fromMe: !!orig.from_me, text: replySnippet(orig) };
+  }
+  const res = await evo.sendText(numberFor(chat), text, quoted);
   const id = res?.key?.id || `out_${Date.now()}`;
   const ts = res?.messageTimestamp ? toMs(res.messageTimestamp) : Date.now();
   const { msg } = storeMessage({ chat, id, fromMe: true, kind: 'text', body: text, ts, status: res?.status || 'PENDING', authorId: user.id });
   db.prepare('UPDATE messages SET author_id = COALESCE(author_id, ?) WHERE id = ?').run(user.id, id);
+  if (quoted) db.prepare('UPDATE messages SET reply_id = ?, reply_text = ?, reply_from_me = ? WHERE id = ?').run(quoted.id, quoted.text, quoted.fromMe ? 1 : 0, id);
   claimIfQueue(user, chat);
   const fresh = getChat(chat.id);
   pushChat(fresh);

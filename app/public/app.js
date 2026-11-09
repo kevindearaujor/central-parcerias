@@ -36,6 +36,7 @@
     mic: P('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
     eye: P('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
     eyeOff: P('<path d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'),
+    reply: P('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 5 5v6"/>'),
     chevron: P('<path d="M6 9l6 6 6-6"/>'),
     sun: P('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
     moon: P('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
@@ -553,7 +554,7 @@
     S.current = id;
     $('#inbox')?.classList.add('has-chat');
     document.querySelectorAll('.chat-item').forEach(el => el.classList.toggle('active', el.dataset.chat === id));
-    if (changed) cancelRecording();
+    if (changed) { cancelRecording(); replyTo = null; }
     if (changed || !keep) { S.messages = []; renderChatPane(true); }
     try {
       const r = await A.get(`/api/chats/${encodeURIComponent(id)}`);
@@ -587,6 +588,7 @@
       <div class="messages" id="messages">${loading ? '<div class="sys">Carregando…</div>' : ''}</div>
       <div class="composer" id="composer">
         <div class="qr-pop" id="qr-pop" hidden></div>
+        <div class="reply-bar" id="reply-bar" hidden></div>
         <div class="attach-preview" id="attach-preview" hidden></div>
         <div class="composer-row">
           <button class="icon-btn" id="attach-btn" type="button" aria-label="Anexar arquivo" title="Anexar arquivo">${I.clip}</button>
@@ -679,6 +681,7 @@
     return `<div class="msg ${m.from_me ? 'out' : 'in'} ${m.deleted ? 'deleted' : ''}" data-mid="${esc(m.id)}">
       <button class="msg-menu-btn" data-menu="${esc(m.id)}" aria-label="Opções da mensagem">${I.chevron}</button>
       ${m.from_me ? `<div class="author">${esc(who)}</div>` : ''}
+      ${m.reply_id ? `<button class="quote in-msg ${m.reply_from_me ? 'me' : ''}" data-goto="${esc(m.reply_id)}"><b>${esc(replyWho(!!m.reply_from_me, (S.messages.find(x => x.id === m.reply_id) || {}).author_id))}</b><span>${esc(m.reply_text || '')}</span></button>` : ''}
       ${media}${body ? `<div class="body">${body}</div>` : ''}
       <div class="foot">${m.edited ? 'editada · ' : ''}${hhmm(m.ts)}${ticks}</div></div>`;
   }
@@ -757,7 +760,7 @@
       const btn = $('#send-btn'); btn.disabled = true;
       try {
         if (pendingFile) { await uploadFile(id, pendingFile, text); pendingFile = null; $('#attach-preview').hidden = true; }
-        else await A.post(`/api/chats/${encodeURIComponent(id)}/send`, { text });
+        else { await A.post(`/api/chats/${encodeURIComponent(id)}/send`, { text, replyTo }); clearReply(); }
         ta.value = ''; store.set(draftKey, ''); autosize(); pop.hidden = true;
       } catch (e) { toast(e.message, true); }
       btn.disabled = false; ta.focus();
@@ -768,7 +771,15 @@
   const EDIT_LIMIT = 15 * 60e3, DELETE_LIMIT = 48 * 3600e3;
   function bindMessageMenu(el) {
     if (el._menuBound) return; el._menuBound = true;
-    el.addEventListener('click', e => { const b = e.target.closest('[data-menu]'); if (b) { e.stopPropagation(); openMsgMenu(b.dataset.menu, b); } });
+    el.addEventListener('click', e => {
+      const b = e.target.closest('[data-menu]'); if (b) { e.stopPropagation(); openMsgMenu(b.dataset.menu, b); return; }
+      const g = e.target.closest('[data-goto]');
+      if (g) {
+        const t = el.querySelector(`.msg[data-mid="${CSS.escape(g.dataset.goto)}"]`);
+        if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1200); }
+        else toast('A mensagem original é mais antiga. Toque em "Carregar mensagens anteriores".');
+      }
+    });
     // celular: segurar o dedo na mensagem abre o menu
     let t = null, sx = 0, sy = 0;
     el.addEventListener('touchstart', e => {
@@ -786,6 +797,7 @@
     const m = S.messages.find(x => x.id === id); if (!m) return;
     const age = Date.now() - m.ts;
     const opts = [];
+    if (!m.deleted) opts.push(['reply', I.reply, 'Responder']);
     if (m.from_me && m.kind === 'text' && !m.deleted && age < EDIT_LIMIT) opts.push(['edit', I.edit, 'Editar']);
     if (m.body && !m.deleted) opts.push(['copy', I.doc, 'Copiar texto']);
     if (m.from_me && !m.deleted && age < DELETE_LIMIT) opts.push(['all', I.trash, 'Apagar para todos', 'danger']);
@@ -802,6 +814,7 @@
     pop.onclick = async e => {
       const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); closeMsgMenu();
       const base = `/api/chats/${encodeURIComponent(S.current)}/messages/${encodeURIComponent(m.id)}`;
+      if (b.dataset.act === 'reply') return startReply(m);
       if (b.dataset.act === 'copy') { try { await navigator.clipboard.writeText(m.body); toast('Texto copiado'); } catch { toast('Não consegui copiar', true); } return; }
       if (b.dataset.act === 'edit') return modal(`<h3>Editar mensagem</h3>
           <div class="field"><label for="em-text">O cliente vê a mensagem com a marca "Editada".</label><textarea class="input" id="em-text" rows="5">${esc(m.body)}</textarea></div>
@@ -834,6 +847,27 @@
     vv.addEventListener('resize', fit); vv.addEventListener('scroll', () => { if (window.scrollY) window.scrollTo(0, 0); });
     fit();
   })();
+
+  // ---------- responder citando ----------
+  let replyTo = null;
+  function quoteText(m) {
+    if (m.deleted) return 'Mensagem apagada';
+    const tag = { image: '📷 Foto', video: '🎥 Vídeo', audio: '🎤 Áudio', document: '📄 ' + (m.file_name || 'Documento'), sticker: 'Figurinha', location: '📍 Localização', contact: '👤 Contato' }[m.kind];
+    return m.body ? (tag && m.kind !== 'document' ? `${tag} · ${m.body}` : m.body) : (tag || '');
+  }
+  function replyWho(fromMe, authorId) {
+    if (!fromMe) { const c = S.chats.get(S.current); return c ? chatName(c) : 'Cliente'; }
+    const a = authorId ? userById(authorId) : null; return a ? a.name : 'Você';
+  }
+  function startReply(m) {
+    replyTo = m.id;
+    const bar = $('#reply-bar'); if (!bar) return;
+    bar.hidden = false;
+    bar.innerHTML = `<div class="quote ${m.from_me ? 'me' : ''}"><b>${esc(replyWho(m.from_me, m.author_id))}</b><span>${esc(quoteText(m))}</span></div><button class="icon-btn" id="reply-x" aria-label="Cancelar resposta">${I.x}</button>`;
+    $('#reply-x').onclick = clearReply;
+    $('#compose')?.focus();
+  }
+  function clearReply() { replyTo = null; const bar = $('#reply-bar'); if (bar) { bar.hidden = true; bar.innerHTML = ''; } }
 
   // ---------- deslizar para voltar (celular) ----------
   function bindSwipeBack(pane) {
@@ -1554,6 +1588,8 @@
           const kind = sub === '/note' ? 'note' : sub === '/media' ? (body.mime.startsWith('image/') ? 'image' : 'document') : 'text';
           const msg = addMsg(id, { chat_id: id, from_me: true, kind, body: sub === '/media' ? body.caption : body.text, file_name: body.fileName || null, ts: Date.now(), author_id: me.id, status: kind === 'note' ? null : 'SERVER_ACK' });
           if (kind === 'image' && body.base64) msg._src = body.base64;
+          const orig = body.replyTo && (msgs.get(id) || []).find(x => x.id === body.replyTo);
+          if (orig) { msg.reply_id = orig.id; msg.reply_text = orig.body || (orig.kind === 'image' ? '📷 Foto' : orig.kind === 'audio' ? '🎤 Áudio' : '📎 Arquivo'); msg.reply_from_me = !!orig.from_me; }
           if (kind !== 'note') {
             touch(c, msg); if (!c.first_reply_at) c.first_reply_at = Date.now();
             if (c.assigned_to == null) { c.assigned_to = me.id; addMsg(id, { chat_id: id, from_me: true, kind: 'system', body: `${me.name} assumiu o atendimento`, ts: Date.now() }); }

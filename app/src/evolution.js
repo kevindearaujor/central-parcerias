@@ -74,8 +74,11 @@ async function logout() {
   return call('DELETE', `/instance/logout/${enc(INSTANCE)}`);
 }
 
-async function sendText(number, text) {
-  return call('POST', `/message/sendText/${enc(INSTANCE)}`, { number, text });
+// quoted: responde citando uma mensagem (igual ao "Responder" do WhatsApp)
+async function sendText(number, text, quoted) {
+  const body = { number, text };
+  if (quoted) body.quoted = { key: { id: quoted.id, remoteJid: quoted.remoteJid, fromMe: !!quoted.fromMe }, message: { conversation: quoted.text || '' } };
+  return call('POST', `/message/sendText/${enc(INSTANCE)}`, body);
 }
 
 async function sendMedia(number, { mediatype, mimetype, base64, fileName, caption }) {
