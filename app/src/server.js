@@ -162,7 +162,7 @@ route('GET', '/api/bootstrap', async (req, res, { user }) => {
 route('GET', '/api/chats', async (req, res, { user, query }) => {
   const where = [];
   const vals = [];
-  if (user.role !== 'admin') { where.push('(assigned_to IS NULL OR assigned_to = ?)'); vals.push(user.id); }
+  if (user.role !== 'admin') { where.push('((assigned_to IS NULL AND held = 0) OR assigned_to = ?)'); vals.push(user.id); }
   const f = query.get('filter') || 'all';
   if (f === 'mine') { where.push('assigned_to = ?'); vals.push(user.id); }
   if (f === 'queue') where.push('assigned_to IS NULL');
@@ -473,6 +473,12 @@ route('PATCH', '/api/queue', async (req, res, { user }) => {
   if (b.member && b.member.id) db.prepare('UPDATE users SET queue_on = ? WHERE id = ?').run(b.member.on ? 1 : 0, Number(b.member.id));
   if (b.reassignOn !== undefined) setSetting('reassign_on', b.reassignOn ? '1' : '0');
   if (b.reassignMin !== undefined) setSetting('reassign_min', String(Math.min(Math.max(Number(b.reassignMin) || 5, 1), 120)));
+  const hhmm = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || '')) ? String(v) : null;
+  if (b.holdOn !== undefined) setSetting('hold_on', b.holdOn ? '1' : '0');
+  if (b.holdStart !== undefined) { const v = hhmm(b.holdStart); if (!v) return fail(res, 400, 'Horário inválido'); setSetting('hold_start', v); }
+  if (b.holdEnd !== undefined) { const v = hhmm(b.holdEnd); if (!v) return fail(res, 400, 'Horário inválido'); setSetting('hold_end', v); }
+  if (b.releaseNow) core.releaseHeld(true);
+  else if (b.holdOn !== undefined || b.holdStart !== undefined || b.holdEnd !== undefined) core.releaseHeld();
   core.pushAll('config_changed', {});
   send(res, 200, core.queueState());
 });

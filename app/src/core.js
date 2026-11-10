@@ -21,6 +21,13 @@ function notifyChat(c, kind, text) {
     const preview = String(text || c.last_text || '').slice(0, 120);
     const data = { tag: c.ref, url: `/?c=${encodeURIComponent(c.ref)}` };
     let to = [];
+    if (c.held && !c.assigned_to) {
+      // lead represado fora do horário: só o administrador fica sabendo
+      data.title = kind === 'new' ? `Lead represado · ${c.ad_title || name}` : name;
+      data.body = kind === 'new' ? `${name}: ${preview} (libera às ${getSetting('hold_end', '08:45')})` : preview;
+      push.notifyUsers(adminIds(), data);
+      return;
+    }
     if (kind === 'new') {
       data.title = c.ad_title ? `Novo lead · ${c.ad_title}` : `Novo lead · ${name}`;
       data.body = c.assigned_to ? `${name}: ${preview}` : `${name} está na fila: ${preview}`;
@@ -71,6 +78,7 @@ function presentMsg(m) {
 function canSee(user, chat) {
   if (!user || !chat) return false;
   if (user.role === 'admin') return true;
+  if (chat.held && chat.assigned_to == null) return false; // represado: só o administrador vê
   return chat.assigned_to == null || chat.assigned_to === user.id;
 }
 
@@ -170,7 +178,59 @@ function reassignOverdue() {
     notifyChat(fresh, next ? 'assigned' : 'queue');
   }
 }
-setInterval(() => { try { reassignOverdue(); } catch (e) { console.error('[repasse]', e.message); } }, 30e3);
+
+// ===== horário de represamento =====
+// Leads que chegam no horário configurado (ex.: 22:00 às 08:45) ficam só com o administrador
+// e são liberados em fila quando o horário termina. Horário de Brasília.
+function nowMinutesBR(d = new Date()) {
+  try {
+    const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d);
+    return Number(p.find(x => x.type === 'hour').value) * 60 + Number(p.find(x => x.type === 'minute').value);
+  } catch {
+    const m = (d.getUTCHours() * 60 + d.getUTCMinutes() - 180 + 1440) % 1440; // Brasília = UTC-3
+    return m;
+  }
+}
+const toMin = (s) => { const [h, m] = String(s || '').split(':').map(Number); return ((h || 0) * 60 + (m || 0)) % 1440; };
+function holdActive(d) {
+  if (getSetting('hold_on') !== '1') return false;
+  const now = nowMinutesBR(d);
+  const a = toMin(getSetting('hold_start', '22:00'));
+  const b = toMin(getSetting('hold_end', '08:45'));
+  if (a === b) return false;
+  return a < b ? (now >= a && now < b) : (now >= a || now < b);
+}
+function heldCount() { return db.prepare('SELECT COUNT(*) n FROM chats WHERE held = 1').get().n; }
+// Fim do horário: solta os represados, do mais antigo para o mais novo, na fila
+function releaseHeld(force = false) {
+  if (!force && holdActive()) return 0;
+  const rows = db.prepare('SELECT * FROM chats WHERE held = 1 ORDER BY created_at').all();
+  for (const c of rows) {
+    const sys = [];
+    db.prepare('UPDATE chats SET held = 0 WHERE id = ?').run(c.id);
+    sys.push(addSystemMessage(c.id, 'Lead liberado para a equipe (chegou fora do horário)'));
+    const out = c.stage === 'perdido' || c.stage === 'arquivado';
+    let assigned = false;
+    if (!out && c.assigned_to == null && getSetting('auto_distribute') === '1') {
+      const b = nextBroker();
+      if (b) {
+        db.prepare('UPDATE chats SET assigned_to = ?, assigned_at = ?, auto_assigned = 1, auto_tries = ? WHERE id = ?').run(b.id, Date.now(), JSON.stringify([b.id]), c.id);
+        sys.push(addSystemMessage(c.id, `Distribuído automaticamente para ${b.name}`));
+        assigned = true;
+      }
+    }
+    const fresh = getChat(c.id);
+    pushChat(fresh);
+    sys.forEach(s => pushMessage(fresh, s));
+    if (!out) notifyChat(fresh, assigned ? 'assigned' : 'new');
+  }
+  if (rows.length) { console.log(`[represamento] ${rows.length} lead(s) liberado(s)`); pushAdmins('queue_changed', {}); }
+  return rows.length;
+}
+setInterval(() => {
+  try { releaseHeld(); } catch (e) { console.error('[represamento]', e.message); }
+  try { reassignOverdue(); } catch (e) { console.error('[repasse]', e.message); }
+}, 30e3);
 
 function queueState() {
   const next = peekNextBroker();
@@ -178,6 +238,7 @@ function queueState() {
     reassignOn: getSetting('reassign_on') === '1',
     reassignMin: Number(getSetting('reassign_min', '5')) || 5,
     auto: getSetting('auto_distribute') === '1',
+    hold: { on: getSetting('hold_on') === '1', start: getSetting('hold_start', '22:00'), end: getSetting('hold_end', '08:45'), active: holdActive(), count: heldCount() },
     nextId: next ? next.id : null,
     members: q.queueMembers.all().map(u => ({ id: u.id, name: u.name, on: !!u.queue_on })),
   };
@@ -219,7 +280,10 @@ function findOrCreateChat({ jid, lid, pushName, fromMe, ad, ts }) {
 function onNewLead(chat) {
   const sys = [];
   if (chat.origin === 'anuncio') sys.push(addSystemMessage(chat.id, `Lead veio do anúncio${chat.ad_title ? `: ${chat.ad_title}` : ''}`, null, chat.created_at - 1));
-  if (getSetting('auto_distribute') === '1' && chat.assigned_to == null) {
+  if (chat.assigned_to == null && holdActive()) {
+    db.prepare('UPDATE chats SET held = 1 WHERE id = ?').run(chat.id);
+    sys.push(addSystemMessage(chat.id, `Chegou fora do horário. Represado até as ${getSetting('hold_end', '08:45')}: só o administrador vê.`, null, chat.created_at));
+  } else if (getSetting('auto_distribute') === '1' && chat.assigned_to == null) {
     const b = nextBroker();
     if (b) {
       db.prepare("UPDATE chats SET assigned_to = ?, assigned_at = ?, auto_assigned = 1, auto_tries = ? WHERE id = ?").run(b.id, Date.now(), JSON.stringify([b.id]), chat.id);
@@ -715,6 +779,7 @@ function updateChat(user, chat, patch) {
     const target = to ? q.userById.get(to) : null;
     if (to && !target) throw Object.assign(new Error('Corretor não encontrado'), { status: 400 });
     sets.push('assigned_to = ?', 'auto_assigned = 0', 'assigned_at = ?'); vals.push(to, Date.now());
+    if (to) sets.push('held = 0'); // entregue a alguém: deixa de estar represado
     sys.push(target
       ? (target.id === user.id ? `${user.name} assumiu o atendimento` : `${user.name} transferiu para ${target.name}`)
       : `${user.name} devolveu para a fila`);
@@ -762,6 +827,6 @@ module.exports = {
   deleteUser,
   addClient, removeClient, canSee, present, presentMsg, pushChat, pushAll, setWaState, getWaState,
   sendVoice, mediaFile, sendFile, editMessage, deleteMessage, takeTemp, MEDIA_DIR,
-  getChat, getChatByRef, handleWebhook, refreshAvatar, avatarFile, queueState, reassignOverdue, sendText, sendMedia, addNote, updateChat, findOrCreateChat,
+  getChat, getChatByRef, handleWebhook, releaseHeld, holdActive, refreshAvatar, avatarFile, queueState, reassignOverdue, sendText, sendMedia, addNote, updateChat, findOrCreateChat,
   extractContent, resolveJid, toMs,
 };

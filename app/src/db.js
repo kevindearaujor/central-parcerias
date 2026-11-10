@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS settings (
 `);
 
 // migração de bancos antigos
-for (const col of ['prev_stage TEXT', 'ref TEXT', 'avatar_at INTEGER', 'assigned_at INTEGER', 'auto_assigned INTEGER NOT NULL DEFAULT 0', "auto_tries TEXT NOT NULL DEFAULT '[]'"]) {
+for (const col of ['prev_stage TEXT', 'ref TEXT', 'avatar_at INTEGER', 'assigned_at INTEGER', 'auto_assigned INTEGER NOT NULL DEFAULT 0', "auto_tries TEXT NOT NULL DEFAULT '[]'", 'held INTEGER NOT NULL DEFAULT 0']) {
   try { db.exec(`ALTER TABLE chats ADD COLUMN ${col}`); } catch {}
 }
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS chats_ref ON chats(ref)');
@@ -161,6 +161,10 @@ function seed() {
   if (getSetting('auto_distribute') == null) setSetting('auto_distribute', '0');
   if (getSetting('reassign_on') == null) setSetting('reassign_on', '1');
   if (getSetting('reassign_min') == null) setSetting('reassign_min', '5');
+  // represar leads que chegam fora do horário (só o administrador vê até liberar)
+  if (getSetting('hold_on') == null) setSetting('hold_on', '1');
+  if (getSetting('hold_start') == null) setSetting('hold_start', '22:00');
+  if (getSetting('hold_end') == null) setSetting('hold_end', '08:45');
   if (getSetting('session_secret') == null) setSetting('session_secret', crypto.randomBytes(32).toString('hex'));
 }
 seed();
@@ -170,7 +174,7 @@ function rowChat(r) {
   if (!r) return null;
   let tags = [];
   try { tags = JSON.parse(r.tags || '[]'); } catch {}
-  return { ...r, tags, last_from_me: !!r.last_from_me };
+  return { ...r, tags, last_from_me: !!r.last_from_me, held: !!r.held };
 }
 function rowMsg(r) {
   if (!r) return null;

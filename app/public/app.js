@@ -536,7 +536,8 @@
       const broker = c.assigned_to ? userById(c.assigned_to) : null;
       const chips = [];
       if (c.origin === 'anuncio') chips.push(`<span class="chip ad">${esc(c.ad_title ? trunc(c.ad_title, 22) : 'Anúncio')}</span>`);
-      if (c.assigned_to == null) chips.push('<span class="chip queue">Fila</span>');
+      if (c.assigned_to == null && c.held) chips.push('<span class="chip held">Represado</span>');
+      else if (c.assigned_to == null) chips.push('<span class="chip queue">Fila</span>');
       else if (isAdmin() && broker) chips.push(`<span class="chip">${esc(broker.name.split(' ')[0])}</span>`);
       c.tags.slice(0, 2).forEach(id => { const t = tagById(id); if (t) chips.push(`<span class="chip"><span class="sw" style="background:${esc(t.color)}"></span>${esc(t.name)}</span>`); });
       const prefix = c.last_from_me ? 'Você: ' : '';
@@ -1101,6 +1102,11 @@
         <label class="switch"><input type="checkbox" id="q-re" ${st.reassignOn ? 'checked' : ''} ${st.auto ? '' : 'disabled'}><span><strong>Repassar se não responder</strong><small>Se o corretor não responder o lead no tempo escolhido, ele vai para o próximo da fila. Se ninguém responder, volta para Não lidas.</small></span></label>
         <select class="input" id="q-min" aria-label="Tempo para repassar" ${st.auto && st.reassignOn ? '' : 'disabled'}>${[2, 3, 5, 10, 15, 30].map(m => `<option value="${m}" ${st.reassignMin === m ? 'selected' : ''}>${m} min</option>`).join('')}</select>
       </div>
+      ${st.hold ? `<div class="q-hold ${st.hold.on ? '' : 'disabled'}">
+        <label class="switch"><input type="checkbox" id="q-hold" ${st.hold.on ? 'checked' : ''}><span><strong>Represar leads fora do horário</strong><small>Leads que chegarem nesse horário ficam só com os administradores. Quando o horário termina, todos são liberados em fila.</small></span></label>
+        <div class="q-hours"><span>Das</span><input type="time" class="input" id="q-hs" value="${esc(st.hold.start)}" ${st.hold.on ? '' : 'disabled'} aria-label="Início"><span>às</span><input type="time" class="input" id="q-he" value="${esc(st.hold.end)}" ${st.hold.on ? '' : 'disabled'} aria-label="Fim"></div>
+        ${st.hold.on ? `<p class="q-hold-st">${st.hold.active ? '<span class="dot-on"></span>Represando agora' : 'Fora do horário de represamento'}${st.hold.count ? ` · <strong>${st.hold.count} lead${st.hold.count > 1 ? 's' : ''} represado${st.hold.count > 1 ? 's' : ''}</strong> <button class="btn sm" id="q-release">Liberar agora</button>` : ''}</p>` : ''}
+      </div>` : ''}
       ${st.members.length ? `<ol class="q-list" id="q-list">${st.members.map((m, i) => `
         <li class="q-item ${m.on ? '' : 'off'}" data-id="${m.id}">
           <button class="q-grip" aria-label="Arrastar ${esc(m.name)}" title="Arraste para mudar a posição">${I.grip}</button>
@@ -1112,6 +1118,13 @@
         <p class="q-foot">${onCount} de ${st.members.length} corretores recebendo leads.${!onCount && st.auto ? ' Com todos pausados, os leads ficam em Não lidas.' : ''}</p>`
       : '<div class="empty">Nenhum corretor cadastrado. Adicione a equipe em Configurações › Equipe.</div>'}`;
     $('#q-auto').onchange = async e => { try { renderQueuePanel(await A.patch('/api/queue', { auto: e.target.checked })); toast(e.target.checked ? 'Distribuição automática ligada' : 'Distribuição automática desligada'); } catch (err) { toast(err.message, true); } };
+    const hp = async (body, msg) => { try { renderQueuePanel(await A.patch('/api/queue', body)); if (msg) toast(msg); } catch (err) { toast(err.message, true); } };
+    if ($('#q-hold')) {
+      $('#q-hold').onchange = e => hp({ holdOn: e.target.checked }, e.target.checked ? 'Represamento ligado' : 'Represamento desligado: leads represados foram liberados');
+      $('#q-hs').onchange = e => e.target.value && hp({ holdStart: e.target.value }, `Represa a partir das ${e.target.value}`);
+      $('#q-he').onchange = e => e.target.value && hp({ holdEnd: e.target.value }, `Libera às ${e.target.value}`);
+      if ($('#q-release')) $('#q-release').onclick = () => hp({ releaseNow: true }, 'Leads liberados para a fila');
+    }
     $('#q-re').onchange = async e => { try { renderQueuePanel(await A.patch('/api/queue', { reassignOn: e.target.checked })); } catch (err) { toast(err.message, true); } };
     $('#q-min').onchange = async e => { try { renderQueuePanel(await A.patch('/api/queue', { reassignMin: Number(e.target.value) })); toast(`Repasse em ${e.target.value} min sem resposta`); } catch (err) { toast(err.message, true); } };
     el.querySelectorAll('[data-toggle]').forEach(t => t.onchange = async () => {
@@ -1478,16 +1491,23 @@
       msgs.set(id, [{ id: 'old' + k, chat_id: id, from_me: false, kind: 'text', body: 'Olá! Tenho interesse e queria mais informações, por favor.', ts: t }]);
     }
     let me = users[0];
-    const queue = { auto: true, order: [2, 3, 4], paused: new Set(), last: 3, reOn: true, reMin: 5 };
+    const queue = { auto: true, order: [2, 3, 4], paused: new Set(), last: 3, reOn: true, reMin: 5, hold: { on: true, start: '22:00', end: '08:45' } };
+    // um lead que chegou de madrugada, represado
+    { const id = '5511955501234@s.whatsapp.net'; const t = now - 3 * hr;
+      chats.set(id, { id, phone: '5511955501234', name: null, push_name: 'Patrícia Gomes', avatar: null, stage: 'novo', tags: [], assigned_to: null, held: true, notes: '', unread: 1, last_text: 'Boa noite! Vi o anúncio, ainda tem unidade?', last_at: t, last_from_me: false, origin: 'anuncio', ad_title: ADS[0], created_at: t, first_reply_at: null, stage_changed_at: t });
+      msgs.set(id, [{ id: 'held1s', chat_id: id, from_me: false, kind: 'system', body: 'Chegou fora do horário. Represado até as 08:45: só o administrador vê.', ts: t - 1 }, { id: 'held1', chat_id: id, from_me: false, kind: 'text', body: 'Boa noite! Vi o anúncio, ainda tem unidade?', ts: t }]); }
+    const holdCount = () => [...chats.values()].filter(c => c.held).length;
+    const holdActiveDemo = () => { const d = new Date(); const n = d.getHours() * 60 + d.getMinutes(); const tm = x => { const [h, m] = x.split(':').map(Number); return h * 60 + m; }; const a = tm(queue.hold.start), b = tm(queue.hold.end); return queue.hold.on && (a < b ? n >= a && n < b : n >= a || n < b); };
+    const releaseDemo = () => { for (const c of chats.values()) if (c.held) { c.held = false; addMsg(c.id, { chat_id: c.id, from_me: true, kind: 'system', body: 'Lead liberado para a equipe (chegou fora do horário)', ts: Date.now() }); emitChat(c); } };
     function queueState() {
       const all = queue.order.map(id => users.find(u => u.id === id)).filter(u => u && u.active && u.role === 'corretor');
       const on = all.filter(u => !queue.paused.has(u.id));
       let next = null; const i = all.findIndex(u => u.id === queue.last);
       for (let k = 1; k <= all.length && !next; k++) { const u = all[(i + k + all.length) % all.length]; if (u && !queue.paused.has(u.id)) next = u; }
       if (!next && on.length) next = on[0];
-      return { reassignOn: queue.reOn, reassignMin: queue.reMin, auto: queue.auto, nextId: next ? next.id : null, members: all.map(u => ({ id: u.id, name: u.name, on: !queue.paused.has(u.id) })) };
+      return { hold: { ...queue.hold, active: holdActiveDemo(), count: holdCount() }, reassignOn: queue.reOn, reassignMin: queue.reMin, auto: queue.auto, nextId: next ? next.id : null, members: all.map(u => ({ id: u.id, name: u.name, on: !queue.paused.has(u.id) })) };
     }
-    const visible = (c) => me.role === 'admin' || c.assigned_to == null || c.assigned_to === me.id;
+    const visible = (c) => me.role === 'admin' || (c.assigned_to == null && !c.held) || c.assigned_to === me.id;
     const restoreStage = (c) => (c.prev_stage && c.prev_stage !== 'perdido' && c.prev_stage !== 'arquivado' ? c.prev_stage : (c.first_reply_at ? 'tratativa' : 'novo'));
     const clone = (o) => JSON.parse(JSON.stringify(o));
     const chatOut = (c) => { const o = clone(c); if (me.role !== 'admin') { o.phone = null; o.phone_hidden = true; } return o; };
@@ -1529,6 +1549,10 @@
         if (b.member) { if (b.member.on) queue.paused.delete(b.member.id); else queue.paused.add(b.member.id); }
         if (b.reassignOn !== undefined) queue.reOn = !!b.reassignOn;
         if (b.reassignMin !== undefined) queue.reMin = Number(b.reassignMin);
+        if (b.holdOn !== undefined) queue.hold.on = !!b.holdOn;
+        if (b.holdStart) queue.hold.start = b.holdStart;
+        if (b.holdEnd) queue.hold.end = b.holdEnd;
+        if (b.releaseNow || !holdActiveDemo()) releaseDemo();
         return queueState();
       },
       'GET /api/dashboard': (b, q) => {
