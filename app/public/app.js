@@ -180,11 +180,27 @@
     if (S.view === 'funil') scheduleFunnel();
   }
   function onMessageEvent(chatId, m) {
+    // mensagem enviada pela equipe: tira o balão provisório correspondente
+    if (m.from_me && m.kind !== 'system' && !knownReal.has(m.id)) {
+      const list = temps.get(chatId) || [];
+      const t = list.find(x => x.status === 'SENDING' && ((m.kind === 'text' && x.kind === 'text' && x.body === m.body) || (m.file_name && x.file_name === m.file_name)));
+      if (t) { knownReal.add(m.id); dropTemp(chatId, t.id); }
+    }
+    const arr = S.current === chatId ? S.messages : msgCache.get(chatId)?.messages;
+    if (arr && S.current !== chatId) {
+      const j = arr.findIndex(x => x.id === m.id);
+      if (m.hidden) { if (j >= 0) arr.splice(j, 1); } else if (j >= 0) arr[j] = m; else arr.push(m);
+    }
     if (S.current === chatId) {
       const i = S.messages.findIndex(x => x.id === m.id);
       if (m.hidden) { if (i >= 0) S.messages.splice(i, 1); renderMessages(false); return; }
-      if (i >= 0) S.messages[i] = m; else S.messages.push(m);
-      renderMessages(i < 0);
+      if (i >= 0) { S.messages[i] = m; patchMsg(m); }
+      else {
+        // mantém os balões "enviando" sempre por último
+        const k = S.messages.findIndex(x => x._tmp);
+        if (k >= 0 && !m._tmp) { S.messages.splice(k, 0, m); renderMessages(false); }
+        else { S.messages.push(m); appendMsg(m); }
+      }
       if (!m.from_me && document.visibilityState === 'visible') markRead(chatId);
     }
     if (!m.from_me && m.kind !== 'system' && i18nNotify(chatId, m)) {}
@@ -552,20 +568,33 @@
 
   async function openChat(id, keep) {
     const changed = S.current !== id;
+    if (changed && S.current) cacheMsgs(S.current);
     S.current = id;
     $('#inbox')?.classList.add('has-chat');
     document.querySelectorAll('.chat-item').forEach(el => el.classList.toggle('active', el.dataset.chat === id));
     if (changed) { cancelRecording(); replyTo = null; }
-    if (changed || !keep) { S.messages = []; renderChatPane(true); }
+    const cached = msgCache.get(id);
+    if (changed || !keep) {
+      // abre na hora com o que já foi carregado antes; atualiza em seguida
+      if (cached) { S.messages = cached.messages; S.hasMore = cached.hasMore; renderChatPane(false); renderDetail(); }
+      else { S.messages = []; renderChatPane(true); }
+    }
     try {
       const r = await A.get(`/api/chats/${encodeURIComponent(id)}`);
       if (S.current !== id) return;
-      S.chats.set(id, r.chat); S.messages = r.messages; S.hasMore = r.hasMore;
-      renderChatPane(); renderDetail();
+      S.chats.set(id, r.chat);
+      const next = [...r.messages, ...(temps.get(id) || [])];
+      const same = cached && sig(cached.messages) === sig(next) && S.messages === cached.messages;
+      S.messages = next; S.hasMore = r.hasMore;
+      cacheMsgs(id);
+      if (!same) { if ($('#messages')) { renderChatHead(); renderQueueBar(); renderMessages(true); } else renderChatPane(); }
+      else { renderChatHead(); renderQueueBar(); }
+      renderDetail();
       markRead(id);
     } catch (e) { toast(e.message, true); }
   }
   function closeChat() {
+    if (S.current) cacheMsgs(S.current);
     S.current = null; S.messages = [];
     $('#inbox')?.classList.remove('has-chat', 'show-detail');
     renderChatPane(); renderDetail(); renderList();
@@ -656,9 +685,13 @@
     if (m.kind === 'note') {
       return `<div class="msg note"><div class="author">Nota interna · ${esc(author?.name || '')}</div><div class="body">${richText(m.body)}</div><div class="foot">${hhmm(m.ts)}</div></div>`;
     }
-    const src = DEMO ? demoMedia(m) : `/api/media/${encodeURIComponent(m.id)}`;
+    const src = m._tmp ? (m._blob || '') : DEMO ? demoMedia(m) : `/api/media/${encodeURIComponent(m.id)}`;
     let media = '';
-    if (m.deleted) media = '';
+    if (m._tmp && m.kind !== 'text') {
+      media = (m._blob ? `<img class="media" src="${m._blob}" alt="Imagem">` : `<div class="doc">${I.doc}<span>${esc(m.file_name || 'Arquivo')}</span></div>`)
+        + (m.status === 'SENDING' ? `<div class="up-bar"><i data-upbar="${esc(m.id)}" style="width:${m._up || 0}%"></i></div>` : '');
+    }
+    else if (m.deleted) media = '';
     else if (m.kind === 'image' || m.kind === 'sticker') media = `<a href="${src}" target="_blank" rel="noopener"><img class="media" src="${src}" alt="Imagem" loading="lazy"></a>`;
     else if (m.kind === 'video') media = `<video class="media" src="${src}" controls preload="metadata"></video>`;
     else if (m.kind === 'audio') media = `<audio src="${src}" controls preload="none"></audio>`;
@@ -677,15 +710,100 @@
       else if (st === 'SERVER_ACK') ticks = `<span class="ticks">${I.check}</span>`;
       else if (st === 'ERROR') ticks = `<span class="ticks" style="color:var(--danger)">${I.alert}</span>`;
       else ticks = `<span class="ticks">${I.clock}</span>`;
+      if (m._tmp && st === 'SENDING' && m.kind !== 'text') ticks = `<span class="up-txt num" data-up="${esc(m.id)}">${(m._up || 0) < 100 ? `${m._up || 0}%` : 'Enviando ao WhatsApp…'}</span>` + ticks;
+      if (m._tmp && st === 'ERROR') ticks = `<button class="retry" data-retry="${esc(m.id)}">Não enviado · Tentar de novo</button>` + ticks;
     }
     const who = m.from_me ? (author ? author.name : 'Pelo celular') : '';
-    return `<div class="msg ${m.from_me ? 'out' : 'in'} ${m.deleted ? 'deleted' : ''}" data-mid="${esc(m.id)}">
-      <button class="msg-menu-btn" data-menu="${esc(m.id)}" aria-label="Opções da mensagem">${I.chevron}</button>
+    return `<div class="msg ${m.from_me ? 'out' : 'in'} ${m.deleted ? 'deleted' : ''} ${m._tmp ? 'sending' : ''}" data-mid="${esc(m.id)}">
+      ${m._tmp ? '' : `<button class="msg-menu-btn" data-menu="${esc(m.id)}" aria-label="Opções da mensagem">${I.chevron}</button>`}
       ${m.from_me ? `<div class="author">${esc(who)}</div>` : ''}
       ${m.reply_id ? `<button class="quote in-msg ${m.reply_from_me ? 'me' : ''}" data-goto="${esc(m.reply_id)}"><b>${esc(replyWho(!!m.reply_from_me, (S.messages.find(x => x.id === m.reply_id) || {}).author_id))}</b><span>${esc(m.reply_text || '')}</span></button>` : ''}
       ${media}${body ? `<div class="body">${body}</div>` : ''}
       <div class="foot">${m.edited ? 'editada · ' : ''}${hhmm(m.ts)}${ticks}</div></div>`;
   }
+  // ---------- cache de conversas e envio instantâneo ----------
+  const msgCache = new Map();      // conversa -> mensagens já carregadas (abre na hora)
+  const temps = new Map();         // conversa -> balões "enviando" ainda sem confirmação
+  const knownReal = new Set();
+  const sig = (list) => list.map(m => `${m.id}:${m.status || ''}:${m.deleted ? 1 : 0}:${m.edited ? 1 : 0}:${m.body ? m.body.length : 0}`).join('|');
+  function cacheMsgs(id) {
+    if (!id) return;
+    msgCache.delete(id); msgCache.set(id, { messages: S.messages, hasMore: S.hasMore });
+    while (msgCache.size > 40) msgCache.delete(msgCache.keys().next().value);
+  }
+  function addTemp(chatId, t) {
+    if (!temps.has(chatId)) temps.set(chatId, []);
+    temps.get(chatId).push(t);
+    if (S.current === chatId) { S.messages.push(t); appendMsg(t, true); }
+  }
+  function dropTemp(chatId, tmp) {
+    const list = temps.get(chatId) || [];
+    const t = list.find(x => x.id === tmp);
+    temps.set(chatId, list.filter(x => x.id !== tmp));
+    if (t?._blob) setTimeout(() => URL.revokeObjectURL(t._blob), 5000);
+    const arr = S.current === chatId ? S.messages : msgCache.get(chatId)?.messages;
+    if (arr) { const i = arr.findIndex(x => x.id === tmp); if (i >= 0) arr.splice(i, 1); }
+    if (S.current === chatId) document.querySelector(`#messages .msg[data-mid="${CSS.escape(tmp)}"]`)?.remove();
+  }
+  function resolveTemp(chatId, tmp, real) {
+    if (!real) { dropTemp(chatId, tmp); return; }
+    const pending = (temps.get(chatId) || []).some(x => x.id === tmp);
+    if (pending) { knownReal.add(real.id); dropTemp(chatId, tmp); }
+    onMessageEvent(chatId, real);
+  }
+  function failTemp(chatId, tmp, e) {
+    const t = (temps.get(chatId) || []).find(x => x.id === tmp); if (!t) return;
+    t.status = 'ERROR'; t._err = e?.message || 'Não enviado';
+    if (S.current === chatId) patchMsg(t);
+    toast(`${t.kind === 'text' ? 'Mensagem' : 'Arquivo'} não enviado: ${t._err}`, true);
+  }
+  function retryTemp(tmp) {
+    const id = S.current; const t = (temps.get(id) || []).find(x => x.id === tmp); if (!t) return;
+    dropTemp(id, tmp);
+    if (t.kind === 'text') queueText(id, t.body, t._replyTo); else queueFile(id, t._file, t.body);
+  }
+  let sendChain = Promise.resolve();
+  function queueText(chatId, text, replyId) {
+    const tmp = 'tmp_' + Math.random().toString(36).slice(2);
+    const orig = replyId ? S.messages.find(x => x.id === replyId) : null;
+    addTemp(chatId, { id: tmp, chat_id: chatId, from_me: true, kind: 'text', body: text, ts: Date.now(), status: 'SENDING', author_id: S.me.id, _tmp: true, _replyTo: replyId,
+      reply_id: orig ? orig.id : null, reply_text: orig ? quoteText(orig) : null, reply_from_me: orig ? !!orig.from_me : false });
+    // em ordem: uma mensagem só sai depois da anterior
+    sendChain = sendChain.then(() => A.post(`/api/chats/${encodeURIComponent(chatId)}/send`, { text, replyTo: replyId || null })
+      .then(r => resolveTemp(chatId, tmp, r.message)).catch(e => failTemp(chatId, tmp, e)));
+  }
+  function queueFile(chatId, file, caption) {
+    const tmp = 'tmp_' + Math.random().toString(36).slice(2);
+    const isImg = (file.type || '').startsWith('image/') && file.size <= 16 * 1024 * 1024;
+    const t = { id: tmp, chat_id: chatId, from_me: true, kind: isImg ? 'image' : 'document', body: caption || '', file_name: file.name, ts: Date.now(), status: 'SENDING', author_id: S.me.id, _tmp: true, _up: 0, _file: file, _blob: isImg ? URL.createObjectURL(file) : null };
+    addTemp(chatId, t);
+    uploadFile(chatId, file, caption, p => {
+      t._up = p;
+      const el = document.querySelector(`[data-up="${tmp}"]`); if (el) el.textContent = p < 100 ? `${p}%` : 'Enviando ao WhatsApp…';
+      const bar = document.querySelector(`[data-upbar="${tmp}"]`); if (bar) bar.style.width = `${p}%`;
+    }).then(r => resolveTemp(chatId, tmp, r.message)).catch(e => failTemp(chatId, tmp, e));
+  }
+  // atualiza só o balão que mudou (sem redesenhar a conversa inteira)
+  function patchMsg(m) {
+    const el = $('#messages'); if (!el) return;
+    const old = m.kind !== 'system' && el.querySelector(`.msg[data-mid="${CSS.escape(m.id)}"]`);
+    if (!old) return renderMessages(false);
+    const box = document.createElement('div'); box.innerHTML = msgHtml(m);
+    const neu = box.firstElementChild;
+    // mantém a imagem/vídeo já carregados se nada mudou neles
+    const om = old.querySelector('img.media, video.media, audio'), nm = neu.querySelector('img.media, video.media, audio');
+    if (om && nm && om.getAttribute('src') === nm.getAttribute('src')) nm.replaceWith(om);
+    old.replaceWith(neu);
+  }
+  function appendMsg(m, forceScroll) {
+    const el = $('#messages'); if (!el) return;
+    const prev = S.messages[S.messages.length - 2];
+    if (!prev || m.kind === 'system' || new Date(prev.ts).toDateString() !== new Date(m.ts).toDateString() || el.querySelector(':scope > .sys:only-child')) return renderMessages(true);
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+    el.insertAdjacentHTML('beforeend', msgHtml(m));
+    if (forceScroll || nearBottom || m.from_me) el.scrollTop = el.scrollHeight;
+  }
+
   function renderMessages(scroll) {
     const el = $('#messages'); if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
@@ -706,7 +824,7 @@
     const first = S.messages[0]; if (!first) return;
     const el = $('#messages'); const h = el.scrollHeight;
     const r = await A.get(`/api/chats/${encodeURIComponent(S.current)}?before=${first.ts}`);
-    S.messages = [...r.messages, ...S.messages]; S.hasMore = r.hasMore;
+    S.messages = [...r.messages, ...S.messages]; S.hasMore = r.hasMore; cacheMsgs(S.current);
     renderMessages(false); el.scrollTop = el.scrollHeight - h;
   }
 
@@ -758,13 +876,11 @@
     async function doSend() {
       const text = ta.value.trim(); const id = S.current;
       if (!text && !pendingFile) return;
-      const btn = $('#send-btn'); btn.disabled = true;
-      try {
-        if (pendingFile) { await uploadFile(id, pendingFile, text); pendingFile = null; $('#attach-preview').hidden = true; }
-        else { await A.post(`/api/chats/${encodeURIComponent(id)}/send`, { text, replyTo }); clearReply(); }
-        ta.value = ''; store.set(draftKey, ''); autosize(); pop.hidden = true;
-      } catch (e) { toast(e.message, true); }
-      btn.disabled = false; ta.focus();
+      // o balão aparece na hora; o envio continua por trás
+      if (pendingFile) { queueFile(id, pendingFile, text); pendingFile = null; $('#attach-preview').hidden = true; }
+      else { queueText(id, text, replyTo); clearReply(); }
+      ta.value = ''; store.set(draftKey, ''); autosize(); pop.hidden = true; toggleMic();
+      ta.focus();
     }
   }
 
@@ -773,6 +889,7 @@
   function bindMessageMenu(el) {
     if (el._menuBound) return; el._menuBound = true;
     el.addEventListener('click', e => {
+      const rt = e.target.closest('[data-retry]'); if (rt) { e.stopPropagation(); retryTemp(rt.dataset.retry); return; }
       const b = e.target.closest('[data-menu]'); if (b) { e.stopPropagation(); openMsgMenu(b.dataset.menu, b); return; }
       const g = e.target.closest('[data-goto]');
       if (g) {
@@ -795,7 +912,7 @@
   function closeMsgMenu() { document.querySelector('.msg-pop')?.remove(); document.querySelector('.msg.menu-on')?.classList.remove('menu-on'); }
   function openMsgMenu(id, anchor) {
     closeMsgMenu();
-    const m = S.messages.find(x => x.id === id); if (!m) return;
+    const m = S.messages.find(x => x.id === id); if (!m || m._tmp) return;
     const age = Date.now() - m.ts;
     const opts = [];
     if (!m.deleted) opts.push(['reply', I.reply, 'Responder']);
@@ -896,7 +1013,7 @@
   }
 
   // envio de arquivo com barra de progresso
-  function uploadFile(chatId, file, caption) {
+  function uploadFile(chatId, file, caption, onProgress) {
     if (DEMO) return A.post(`/api/chats/${encodeURIComponent(chatId)}/media`, { base64: '', mime: file.type || 'application/octet-stream', fileName: file.name, caption });
     return new Promise((resolve, reject) => {
       const x = new XMLHttpRequest();
@@ -904,7 +1021,7 @@
       x.open('POST', `/api/chats/${encodeURIComponent(chatId)}/upload?${q}`);
       x.setRequestHeader('X-Requested-With', 'plataforma');
       x.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-      x.upload.onprogress = e => { const el = $('#up-pct'); if (el && e.lengthComputable) el.textContent = e.loaded < e.total ? `${Math.round((e.loaded / e.total) * 100)}%` : 'Enviando ao WhatsApp…'; };
+      x.upload.onprogress = e => { if (e.lengthComputable && onProgress) onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100))); };
       x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch {} x.status < 300 ? resolve(d) : reject(new Error(d.error || 'O arquivo não foi enviado')); };
       x.onerror = () => reject(new Error('Falha de conexão no envio'));
       x.send(file);

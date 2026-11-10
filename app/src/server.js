@@ -587,6 +587,10 @@ const server = http.createServer(async (req, res) => {
   fail(res, 405, 'Método não permitido');
 });
 
+// uploads grandes pelo celular podem demorar: não corta a conexão no meio
+server.requestTimeout = 20 * 60e3;
+server.headersTimeout = 60e3;
+
 server.listen(PORT, () => {
   console.log(`Plataforma rodando na porta ${PORT}`);
   // checa o estado do WhatsApp ao iniciar

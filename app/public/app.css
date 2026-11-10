@@ -539,3 +539,10 @@ body { overscroll-behavior-y: contain; }
 .q-hold-st { margin: 0; padding-left: 50px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .q-hold-st .dot-on { width: 8px; height: 8px; border-radius: 50%; background: #f5a524; display: inline-block; }
 @media (max-width: 700px) { .q-hours, .q-hold-st { padding-left: 0; } }
+
+/* envio instantâneo */
+.msg.sending { opacity: .92; }
+.up-bar { height: 4px; border-radius: 4px; background: rgba(0,0,0,.08); overflow: hidden; margin: 6px 0 2px; }
+.up-bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+.up-txt { font-size: 11px; color: var(--accent); font-weight: 600; margin-right: 4px; }
+.retry { border: 0; background: none; color: var(--danger); font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; padding: 0; margin-right: 4px; text-decoration: underline; }
