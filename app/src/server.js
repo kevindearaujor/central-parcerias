@@ -155,6 +155,7 @@ route('GET', '/api/bootstrap', async (req, res, { user }) => {
     outStages: OUT_STAGES,
     settings: { auto_distribute: getSetting('auto_distribute') === '1' },
     wa: { state: core.getWaState().state },
+    myQueue: core.myQueue(user.id),
   });
 });
 
@@ -196,6 +197,11 @@ route('GET', '/api/chats/:id', async (req, res, { user, params, query }) => {
   send(res, 200, { chat: core.present(chat, user), messages: msgs.map(core.presentMsg), hasMore: msgs.length === 150 });
 });
 
+route('POST', '/api/chats/:id/unread', async (req, res, { user, params }) => {
+  const chat = requireChat(user, params.id);
+  core.markUnread(user, chat);
+  send(res, 200, { ok: true });
+});
 route('POST', '/api/chats/:id/read', async (req, res, { user, params }) => {
   const chat = requireChat(user, params.id);
   if (chat.unread > 0) {

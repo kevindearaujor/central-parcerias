@@ -37,6 +37,7 @@
     eye: P('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
     eyeOff: P('<path d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'),
     reply: P('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 5 5v6"/>'),
+    unread: P('<path d="M21 12a9 9 0 1 1-6.2-8.6"/><circle cx="19" cy="5" r="3" fill="currentColor"/>'),
     chevron: P('<path d="M6 9l6 6 6-6"/>'),
     sun: P('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
     moon: P('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
@@ -160,6 +161,8 @@
     es.addEventListener('wa_state', e => { S.wa.state = JSON.parse(e.data).state; renderWaWarn(); });
     es.addEventListener('wa', e => { S.waFull = JSON.parse(e.data); S.wa.state = S.waFull.state; renderWaWarn(); if (S.view === 'config') renderWaBox(); });
     es.addEventListener('users_changed', () => reloadBootstrap());
+    es.addEventListener('queue_pos', e => { S.myQueue = JSON.parse(e.data); renderMyQueue(); });
+    es.addEventListener('nudge', e => { const d = JSON.parse(e.data); beep(); const c = S.chats.get(d.chatId); toast(`${d.by} marcou ${c ? chatName(c) : 'uma conversa'} como não lida`); });
     es.addEventListener('config_changed', () => reloadBootstrap());
     es.onopen = () => { if (S._esFailed) { S._esFailed = false; loadChats(); } };
     es.onerror = () => { S._esFailed = true; };
@@ -386,6 +389,7 @@
     const b = await A.get('/api/bootstrap');
     Object.assign(S, { me: b.me, users: b.users, tags: b.tags, quickReplies: b.quickReplies, stages: b.stages, outStages: b.outStages || [], settings: b.settings });
     S.wa.state = b.wa.state;
+    S.myQueue = b.myQueue || null; renderMyQueue();
     const fb = $('.rail-btn[data-view=fila]'); if (fb) fb.hidden = !isAdmin();
     if ($('.app')) { renderListFilters(); renderList(); renderChatHead(); renderDetail(); renderWaWarn(); if (S.view === 'config') renderConfig(); }
     return b;
@@ -480,6 +484,7 @@
           <div id="push-banner"></div>
           <div class="list-head">
             <div class="list-title"><h1>Conversas${DEMO ? '<span class="demo-chip">Demo</span>' : ''}</h1><button class="theme-switch" id="theme-switch" role="switch" aria-label="Tema escuro">${I.sun}<span class="knob"></span>${I.moon}</button></div>
+            <div class="my-queue" id="my-queue" ${myQueueHtml() ? '' : 'hidden'}>${myQueueHtml()}</div>
             <div class="search">${I.search}<input class="input" id="q" placeholder="Buscar nome, número ou anúncio" value="${esc(S.q)}" autocomplete="off"></div>
             <div class="tabs" id="tabs"></div>
             <div class="filters" id="filters"></div>
@@ -494,7 +499,22 @@
     const syncSwitch = () => { const dark = store.get('theme', 'dark') !== 'light'; ts.classList.toggle('on', dark); ts.setAttribute('aria-checked', String(dark)); };
     syncSwitch();
     ts.onclick = () => { store.set('theme', store.get('theme', 'dark') === 'light' ? 'dark' : 'light'); applyTheme(); syncSwitch(); };
-    $('#chat-list').addEventListener('click', e => { const it = e.target.closest('[data-chat]'); if (it) openChat(it.dataset.chat); });
+    const list = $('#chat-list');
+    list.addEventListener('click', e => {
+      const mb = e.target.closest('[data-cmenu]'); if (mb) { e.stopPropagation(); openChatMenu(mb.dataset.cmenu, mb); return; }
+      if (list._lp) { list._lp = false; return; }
+      const it = e.target.closest('[data-chat]'); if (it) openChat(it.dataset.chat);
+    });
+    // computador: botão direito · celular: segurar o dedo na conversa
+    list.addEventListener('contextmenu', e => { const it = e.target.closest('[data-chat]'); if (!it) return; e.preventDefault(); openChatMenu(it.dataset.chat, it); });
+    let lpT = null, lx = 0, ly = 0;
+    list.addEventListener('touchstart', e => {
+      const it = e.target.closest('[data-chat]'); if (!it) return;
+      lx = e.touches[0].clientX; ly = e.touches[0].clientY;
+      lpT = setTimeout(() => { lpT = null; list._lp = true; if (navigator.vibrate) navigator.vibrate(15); openChatMenu(it.dataset.chat, it, true); }, 450);
+    }, { passive: true });
+    list.addEventListener('touchmove', e => { if (lpT && (Math.abs(e.touches[0].clientX - lx) > 8 || Math.abs(e.touches[0].clientY - ly) > 8)) { clearTimeout(lpT); lpT = null; } }, { passive: true });
+    list.addEventListener('touchend', () => { if (lpT) { clearTimeout(lpT); lpT = null; } else if (list._lp) setTimeout(() => { list._lp = false; }, 400); });
     renderWaWarn(); renderListFilters(); renderList(); renderPushBanner();
     if (S.current && S.chats.has(S.current)) openChat(S.current, true); else renderChatPane();
   }
@@ -560,7 +580,7 @@
       return `<div class="chat-item ${S.current === c.id ? 'active' : ''} ${c.unread ? 'unread' : ''}" data-chat="${esc(c.id)}" role="button" tabindex="0">
         ${avatarHtml(c)}
         <div style="min-width:0"><div class="name">${esc(chatName(c))}</div><div class="preview">${esc(prefix + (c.last_text || ''))}</div>${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}</div>
-        <div class="meta"><span class="time">${fmtTime(c.last_at || c.created_at)}</span>${c.unread ? `<span class="badge">${c.unread}</span>` : ''}</div>
+        <div class="meta"><span class="time">${fmtTime(c.last_at || c.created_at)}</span><span class="meta-row">${c.unread ? `<span class="badge">${c.unread}</span>` : ''}<button class="ci-menu" data-cmenu="${esc(c.id)}" aria-label="Opções da conversa">${I.chevron}</button></span></div>
       </div>`;
     }).join('');
   }
@@ -599,11 +619,53 @@
     $('#inbox')?.classList.remove('has-chat', 'show-detail');
     renderChatPane(); renderDetail(); renderList();
   }
+  function openChatMenu(id, anchor, touch) {
+    closeMsgMenu();
+    const c = S.chats.get(id); if (!c) return;
+    const pop = document.createElement('div'); pop.className = 'msg-pop';
+    pop.innerHTML = c.unread
+      ? `<button data-act="read">${I.check2}<span>Marcar como lida</span></button>`
+      : `<button data-act="unread">${I.unread}<span>Marcar como não lida</span></button>`;
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect(); const pw = pop.offsetWidth, ph = pop.offsetHeight;
+    const left = Math.max(8, Math.min(r.right - pw, innerWidth - pw - 8));
+    let top = r.bottom + 4; if (top + ph > innerHeight - 8) top = Math.max(8, r.top - ph - 4);
+    pop.style.left = left + 'px'; pop.style.top = top + 'px';
+    // no celular, o toque que soltou o dedo não pode fechar o menu
+    setTimeout(() => document.addEventListener('click', closeMsgMenu, { once: true }), touch ? 600 : 0);
+    pop.onclick = e => {
+      const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); closeMsgMenu();
+      if (b.dataset.act === 'unread') markUnread(id);
+      else { const cc = S.chats.get(id); markRead(id); if (cc) { cc.unread = 0; scheduleListRender(); } }
+    };
+  }
+  async function markUnread(id) {
+    try {
+      await A.post(`/api/chats/${encodeURIComponent(id)}/unread`);
+      const c = S.chats.get(id); if (c && !c.unread) c.unread = 1;
+      // se estava aberta, sai dela para não ser lida de novo na hora (igual ao WhatsApp)
+      if (S.current === id) closeChat(); else scheduleListRender();
+      updateTitle();
+      const who = c && c.assigned_to && c.assigned_to !== S.me.id ? userById(c.assigned_to) : null;
+      toast(who ? `Marcada como não lida. ${who.name} foi avisado(a).` : 'Marcada como não lida');
+    } catch (e) { toast(e.message, true); }
+  }
   function markRead(id) {
     const c = S.chats.get(id);
     if (c && c.unread > 0) { c.unread = 0; renderList(); updateTitle(); A.post(`/api/chats/${encodeURIComponent(id)}/read`).catch(() => {}); }
   }
 
+  // posição do corretor na fila de distribuição
+  function myQueueHtml() {
+    const q = S.me && S.me.role !== 'admin' ? S.myQueue : null;
+    if (q && q.state === 'on') return q.pos === 1 ? '<span class="mq-pos first">1º</span><span>Próximo a receber lead</span>' : `<span class="mq-pos">${q.pos}º</span><span>na fila de distribuição</span>`;
+    if (q && q.state === 'hold') return `<span class="mq-dot"></span><span>Fora do horário de distribuição · volta às ${esc(q.end || '')}</span>`;
+    return '';
+  }
+  function renderMyQueue() {
+    const el = $('#my-queue'); if (!el) return;
+    const html = myQueueHtml(); el.innerHTML = html; el.hidden = !html;
+  }
   function renderChatPane(loading) {
     const pane = $('#chat-pane'); if (!pane) return;
     const c = S.chats.get(S.current);
@@ -1613,6 +1675,14 @@
     { const id = '5511955501234@s.whatsapp.net'; const t = now - 3 * hr;
       chats.set(id, { id, phone: '5511955501234', name: null, push_name: 'Patrícia Gomes', avatar: null, stage: 'novo', tags: [], assigned_to: null, held: true, notes: '', unread: 1, last_text: 'Boa noite! Vi o anúncio, ainda tem unidade?', last_at: t, last_from_me: false, origin: 'anuncio', ad_title: ADS[0], created_at: t, first_reply_at: null, stage_changed_at: t });
       msgs.set(id, [{ id: 'held1s', chat_id: id, from_me: false, kind: 'system', body: 'Chegou fora do horário. Represado até as 08:45: só o administrador vê.', ts: t - 1 }, { id: 'held1', chat_id: id, from_me: false, kind: 'text', body: 'Boa noite! Vi o anúncio, ainda tem unidade?', ts: t }]); }
+    const demoMyQueue = () => {
+      if (me.role === 'admin' || !queue.auto) return null;
+      if (holdActiveDemo()) return { state: 'hold', end: queue.hold.end };
+      const on = queue.order.filter(id => !queue.paused.has(id));
+      const i = on.indexOf(queue.last); const order = [...on.slice(i + 1), ...on.slice(0, i + 1)];
+      const pos = order.indexOf(me.id) + 1;
+      return pos ? { state: 'on', pos, total: order.length } : { state: 'paused' };
+    };
     const holdCount = () => [...chats.values()].filter(c => c.held).length;
     const holdActiveDemo = () => { const d = new Date(); const n = d.getHours() * 60 + d.getMinutes(); const tm = x => { const [h, m] = x.split(':').map(Number); return h * 60 + m; }; const a = tm(queue.hold.start), b = tm(queue.hold.end); return queue.hold.on && (a < b ? n >= a && n < b : n >= a || n < b); };
     const releaseDemo = () => { for (const c of chats.values()) if (c.held) { c.held = false; addMsg(c.id, { chat_id: c.id, from_me: true, kind: 'system', body: 'Lead liberado para a equipe (chegou fora do horário)', ts: Date.now() }); emitChat(c); } };
@@ -1652,7 +1722,7 @@
 
     const err = (m, s = 400) => Promise.reject(new Error(m));
     const routes = {
-      'GET /api/bootstrap': () => ({ me: clone(me), users: clone(users), tags: clone(tags), quickReplies: clone(qrs), stages, outStages, settings: { auto_distribute: false }, wa: { state: 'open' } }),
+      'GET /api/bootstrap': () => ({ me: clone(me), users: clone(users), tags: clone(tags), quickReplies: clone(qrs), stages, outStages, settings: { auto_distribute: false }, wa: { state: 'open' }, myQueue: demoMyQueue() }),
       'GET /api/chats': () => ({ chats: [...chats.values()].filter(visible).map(chatOut) }),
       'GET /api/wa/status': () => ({ state: 'open', qr: null }),
       'POST /api/wa/connect': () => ({ state: 'open' }),
@@ -1703,6 +1773,7 @@
         if (!sub && method === 'PATCH' && body.assigned_to !== undefined && me.role !== 'admin' && c.assigned_to != null && c.assigned_to !== me.id) return err('Sem permissão');
         if (!sub && method === 'GET') { const arr = msgs.get(id) || []; const before = Number(u.searchParams.get('before')) || Infinity; const list = arr.filter(x => x.ts < before); return { chat: chatOut(c), messages: clone(list.slice(-150)), hasMore: list.length > 150 }; }
         if (sub === '/read') { c.unread = 0; return { ok: true }; }
+        if (sub === '/unread') { c.unread = Math.max(1, c.unread || 0); emitChat(c); return { ok: true }; }
         if (!sub && method === 'PATCH') {
           const sys = [];
           const OUT = ['perdido', 'arquivado'];

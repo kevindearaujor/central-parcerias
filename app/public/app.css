@@ -546,3 +546,18 @@ body { overscroll-behavior-y: contain; }
 .up-bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s; }
 .up-txt { font-size: 11px; color: var(--accent); font-weight: 600; margin-right: 4px; }
 .retry { border: 0; background: none; color: var(--danger); font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; padding: 0; margin-right: 4px; text-decoration: underline; }
+
+/* posição do corretor na fila */
+.my-queue { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin: -2px 0 2px; }
+.my-queue .mq-pos { font-family: var(--font-display); font-weight: 700; font-size: 13px; color: var(--accent); background: rgba(47,111,255,.14); border-radius: 999px; padding: 2px 9px; }
+.my-queue .mq-pos.first { background: var(--accent); color: #fff; }
+.my-queue .mq-pos.first + span { color: var(--fg); font-weight: 600; }
+.my-queue .mq-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
+
+/* seta de opções na conversa da lista */
+.chat-item .meta-row { display: flex; align-items: center; gap: 4px; min-height: 20px; }
+.ci-menu { border: 0; background: transparent; color: var(--faint); width: 22px; height: 20px; padding: 0; display: grid; place-items: center; border-radius: 6px; cursor: pointer; opacity: 0; transition: opacity .15s; }
+.ci-menu svg { width: 16px; height: 16px; }
+.chat-item:hover .ci-menu, .ci-menu:focus-visible { opacity: 1; }
+.ci-menu:hover { background: var(--surface-2); color: var(--fg); }
+@media (hover: none) { .ci-menu { display: none; } }

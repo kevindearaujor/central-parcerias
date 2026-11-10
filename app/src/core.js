@@ -142,8 +142,26 @@ function peekNextBroker() {
 }
 function nextBroker() {
   const b = peekNextBroker();
-  if (b) setSetting('rr_last', String(b.id));
+  if (b) { setSetting('rr_last', String(b.id)); setImmediate(broadcastQueuePos); }
   return b;
+}
+// Posição do corretor na fila (aparece para ele embaixo de "Conversas")
+function myQueue(userId) {
+  const u = q.userById.get(userId);
+  if (!u || u.role !== 'corretor') return null;
+  if (getSetting('auto_distribute') !== '1') return { state: 'off' };
+  if (holdActive()) return { state: 'hold', end: getSetting('hold_end', '08:45') };
+  if (!u.queue_on || !u.active) return { state: 'paused' };
+  const all = q.queueMembers.all();
+  const next = peekNextBroker();
+  const start = Math.max(0, all.findIndex(x => x.id === next?.id));
+  const order = [];
+  for (let k = 0; k < all.length; k++) { const x = all[(start + k) % all.length]; if (x.queue_on) order.push(x.id); }
+  const pos = order.indexOf(u.id) + 1;
+  return pos ? { state: 'on', pos, total: order.length } : { state: 'paused' };
+}
+function broadcastQueuePos() {
+  for (const [res, user] of clients) if (user.role !== 'admin') sse(res, 'queue_pos', myQueue(user.id) || {});
 }
 // Repasse: lead distribuído que ficou sem resposta vai para o próximo da fila
 function reassignOverdue() {
@@ -227,7 +245,10 @@ function releaseHeld(force = false) {
   if (rows.length) { console.log(`[represamento] ${rows.length} lead(s) liberado(s)`); pushAdmins('queue_changed', {}); }
   return rows.length;
 }
+let lastHold = null;
 setInterval(() => {
+  // virou o horário de represamento: atualiza a posição que o corretor vê
+  try { const h = holdActive(); if (lastHold !== null && h !== lastHold) broadcastQueuePos(); lastHold = h; } catch {}
   try { releaseHeld(); } catch (e) { console.error('[represamento]', e.message); }
   try { reassignOverdue(); } catch (e) { console.error('[repasse]', e.message); }
 }, 30e3);
@@ -665,6 +686,23 @@ async function sendFile(user, chat, { file, size, mime, fileName, caption, baseU
   return m;
 }
 
+// ================= marcar como não lida =================
+function markUnread(user, chat) {
+  db.prepare('UPDATE chats SET unread = MAX(unread, 1) WHERE id = ?').run(chat.id);
+  const fresh = getChat(chat.id);
+  pushChat(fresh);
+  // avisa o corretor responsável no app (se foi outra pessoa que marcou)
+  if (fresh.assigned_to && fresh.assigned_to !== user.id) {
+    const name = displayName(fresh);
+    push.notifyUsers([fresh.assigned_to], {
+      tag: fresh.ref, url: `/?c=${encodeURIComponent(fresh.ref)}`,
+      title: `${user.name} marcou como não lida`, body: `${name}: ${String(fresh.last_text || '').slice(0, 100)}`,
+    });
+    for (const [res, u] of clients) if (u.id === fresh.assigned_to) sse(res, 'nudge', { chatId: fresh.ref, by: user.name });
+  }
+  return fresh;
+}
+
 // ================= editar / apagar =================
 const EDIT_LIMIT = 15 * 60e3;          // regra do WhatsApp
 const DELETE_LIMIT = 48 * 3600e3;       // apagar para todos: até 2 dias
@@ -827,6 +865,6 @@ module.exports = {
   deleteUser,
   addClient, removeClient, canSee, present, presentMsg, pushChat, pushAll, setWaState, getWaState,
   sendVoice, mediaFile, sendFile, editMessage, deleteMessage, takeTemp, MEDIA_DIR,
-  getChat, getChatByRef, handleWebhook, releaseHeld, holdActive, refreshAvatar, avatarFile, queueState, reassignOverdue, sendText, sendMedia, addNote, updateChat, findOrCreateChat,
+  getChat, getChatByRef, handleWebhook, releaseHeld, holdActive, myQueue, broadcastQueuePos, markUnread, refreshAvatar, avatarFile, queueState, reassignOverdue, sendText, sendMedia, addNote, updateChat, findOrCreateChat,
   extractContent, resolveJid, toMs,
 };
