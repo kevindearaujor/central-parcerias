@@ -243,6 +243,40 @@ route('POST', '/api/chats/:id/upload', async (req, res, { user, params, query })
   } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
 });
 
+// Encaminhar uma mensagem para outras conversas (até 5 de uma vez, nunca para números novos)
+const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'video/mp4': 'mp4', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'application/pdf': 'pdf' };
+route('POST', '/api/chats/:id/forward', async (req, res, { user, params }) => {
+  const chat = requireChat(user, params.id);
+  const { messageId, to } = await readBody(req);
+  const m = db.prepare('SELECT * FROM messages WHERE id = ? AND chat_id = ?').get(String(messageId || ''), chat.id);
+  if (!m || m.deleted || m.hidden || ['system', 'note'].includes(m.kind)) return fail(res, 400, 'Essa mensagem não pode ser encaminhada');
+  const targets = [...new Set((Array.isArray(to) ? to : []).map(String))].filter(t => t !== params.id).slice(0, 5);
+  if (!targets.length) return fail(res, 400, 'Escolha para quem encaminhar');
+  let file = null;
+  if (m.kind !== 'text') { file = await ensureMedia(m); if (!file) return fail(res, 404, 'Esse arquivo não está mais disponível para encaminhar'); }
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const baseUrl = host && host.includes('.') ? `https://${host}` : null;
+  const mime = (m.mime || 'application/octet-stream').split(';')[0];
+  const fileName = m.file_name || `${m.kind === 'image' ? 'imagem' : m.kind === 'video' ? 'video' : m.kind === 'audio' ? 'audio' : 'arquivo'}.${EXT[mime] || mime.split('/')[1] || 'bin'}`;
+  const results = [];
+  for (const t of targets) {
+    try {
+      const tc = requireChat(user, t);
+      // corretor só encaminha para os leads dele
+      if (user.role !== 'admin' && tc.assigned_to !== user.id) throw new Error('Essa conversa não é sua');
+      if (m.kind === 'text') await core.sendText(user, tc, m.body);
+      else {
+        const tmp = path.join(core.MEDIA_DIR, `fw_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`);
+        fs.copyFileSync(file, tmp);
+        try { await core.sendFile(user, tc, { file: tmp, size: fs.statSync(tmp).size, mime, fileName, caption: m.body || '', baseUrl }); }
+        catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
+      }
+      results.push({ to: t, ok: true });
+    } catch (e) { results.push({ to: t, ok: false, error: e.message }); }
+  }
+  send(res, 200, { results });
+});
+
 route('POST', '/api/chats/:id/media', async (req, res, { user, params }) => {
   const chat = requireChat(user, params.id);
   const { base64, mime, fileName, caption } = await readBody(req);

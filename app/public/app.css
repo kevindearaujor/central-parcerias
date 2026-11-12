@@ -561,3 +561,17 @@ body { overscroll-behavior-y: contain; }
 .chat-item:hover .ci-menu, .ci-menu:focus-visible { opacity: 1; }
 .ci-menu:hover { background: var(--surface-2); color: var(--fg); }
 @media (hover: none) { .ci-menu { display: none; } }
+
+/* encaminhar */
+.fw-preview { background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 8px; padding: 8px 10px; font-size: 13.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fw-list { display: grid; max-height: min(46vh, 380px); overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; }
+.fw-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.fw-item:last-child { border-bottom: 0; }
+.fw-item:hover { background: var(--surface-2); }
+.fw-item.on { background: var(--accent-soft); }
+.fw-item input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; margin: 0; }
+.fw-item .avatar { width: 34px; height: 34px; flex: none; font-size: 13px; }
+.fw-name { display: grid; min-width: 0; font-weight: 600; font-size: 14px; }
+.fw-name small { color: var(--muted); font-weight: 400; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fw-empty { margin: 0; padding: 18px; text-align: center; color: var(--muted); font-size: 13.5px; }
+.fw-count { margin-right: auto; align-self: center; font-size: 12.5px; color: var(--muted); }

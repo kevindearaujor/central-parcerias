@@ -37,6 +37,7 @@
     eye: P('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
     eyeOff: P('<path d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2"/>'),
     reply: P('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 5 5v6"/>'),
+    forward: P('<path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0-5 5v6"/>'),
     unread: P('<path d="M21 12a9 9 0 1 1-6.2-8.6"/><circle cx="19" cy="5" r="3" fill="currentColor"/>'),
     chevron: P('<path d="M6 9l6 6 6-6"/>'),
     sun: P('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
@@ -978,6 +979,7 @@
     const age = Date.now() - m.ts;
     const opts = [];
     if (!m.deleted) opts.push(['reply', I.reply, 'Responder']);
+    if (!m.deleted) opts.push(['forward', I.forward, 'Encaminhar']);
     if (m.from_me && m.kind === 'text' && !m.deleted && age < EDIT_LIMIT) opts.push(['edit', I.edit, 'Editar']);
     if (m.body && !m.deleted) opts.push(['copy', I.doc, 'Copiar texto']);
     if (m.from_me && !m.deleted && age < DELETE_LIMIT) opts.push(['all', I.trash, 'Apagar para todos', 'danger']);
@@ -995,6 +997,7 @@
       const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); closeMsgMenu();
       const base = `/api/chats/${encodeURIComponent(S.current)}/messages/${encodeURIComponent(m.id)}`;
       if (b.dataset.act === 'reply') return startReply(m);
+      if (b.dataset.act === 'forward') return openForward(m);
       if (b.dataset.act === 'copy') { try { await navigator.clipboard.writeText(m.body); toast('Texto copiado'); } catch { toast('Não consegui copiar', true); } return; }
       if (b.dataset.act === 'edit') return modal(`<h3>Editar mensagem</h3>
           <div class="field"><label for="em-text">O cliente vê a mensagem com a marca "Editada".</label><textarea class="input" id="em-text" rows="5">${esc(m.body)}</textarea></div>
@@ -1189,6 +1192,44 @@
   }
 
   // ---------- modais ----------
+  // ---------- encaminhar ----------
+  function openForward(m) {
+    const from = S.current; const sel = new Set(); const MAX = 5;
+    const pool = () => [...S.chats.values()]
+      .filter(c => c.id !== from && (isAdmin() || c.assigned_to === S.me.id))
+      .sort((a, b) => (b.last_at || b.created_at) - (a.last_at || a.created_at));
+    const what = m.kind === 'text' ? esc(trunc(m.body || '', 90)) : `${m.kind === 'image' ? '📷 Foto' : m.kind === 'video' ? '🎬 Vídeo' : m.kind === 'audio' ? '🎤 Áudio' : `📎 ${esc(m.file_name || 'Arquivo')}`}${m.body ? ' · ' + esc(trunc(m.body, 60)) : ''}`;
+    modal(`<h3>Encaminhar mensagem</h3>
+      <div class="fw-preview">${what}</div>
+      <input class="input" id="fw-q" placeholder="Buscar conversa" autocomplete="off">
+      <div class="fw-list" id="fw-list"></div>
+      <div class="form-error" id="fw-err"></div>
+      <div class="modal-actions"><span class="fw-count" id="fw-count">Escolha até ${MAX} conversas</span><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fw-ok" disabled>Encaminhar</button></div>`,
+    (bg, close) => {
+      const listEl = bg.querySelector('#fw-list'), q = bg.querySelector('#fw-q'), ok = bg.querySelector('#fw-ok');
+      const draw = () => {
+        const t = q.value.trim().toLowerCase();
+        const rows = pool().filter(c => !t || chatName(c).toLowerCase().includes(t) || (c.ad_title || '').toLowerCase().includes(t)).slice(0, 60);
+        listEl.innerHTML = rows.length ? rows.map(c => `<label class="fw-item ${sel.has(c.id) ? 'on' : ''}"><input type="checkbox" value="${esc(c.id)}" ${sel.has(c.id) ? 'checked' : ''} ${!sel.has(c.id) && sel.size >= MAX ? 'disabled' : ''}>${avatarHtml(c)}<span class="fw-name">${esc(chatName(c))}<small>${esc(c.ad_title || stageName(c.stage) || '')}</small></span></label>`).join('')
+          : `<p class="fw-empty">${isAdmin() ? 'Nenhuma conversa encontrada' : 'Nenhum lead seu encontrado'}</p>`;
+        ok.disabled = !sel.size;
+        ok.textContent = sel.size ? `Encaminhar (${sel.size})` : 'Encaminhar';
+        bg.querySelector('#fw-count').textContent = sel.size >= MAX ? `Máximo de ${MAX} por vez` : `Escolha até ${MAX} conversas`;
+      };
+      listEl.onchange = e => { const v = e.target.value; if (e.target.checked) sel.add(v); else sel.delete(v); draw(); };
+      q.oninput = draw; draw(); setTimeout(() => q.focus(), 50);
+      ok.onclick = async () => {
+        ok.disabled = true; ok.textContent = 'Encaminhando…';
+        try {
+          const r = await A.post(`/api/chats/${encodeURIComponent(from)}/forward`, { messageId: m.id, to: [...sel] });
+          const bad = (r.results || []).filter(x => !x.ok);
+          close();
+          if (!bad.length) toast(sel.size > 1 ? `Encaminhada para ${sel.size} conversas` : 'Mensagem encaminhada');
+          else toast(`Não encaminhou para ${bad.map(x => chatName(S.chats.get(x.to) || {})).join(', ')}: ${bad[0].error}`, true);
+        } catch (err) { bg.querySelector('#fw-err').textContent = err.message; draw(); }
+      };
+    });
+  }
   function modal(html, onReady) {
     const bg = document.createElement('div'); bg.className = 'modal-bg';
     bg.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`;
@@ -1774,6 +1815,13 @@
         if (!sub && method === 'GET') { const arr = msgs.get(id) || []; const before = Number(u.searchParams.get('before')) || Infinity; const list = arr.filter(x => x.ts < before); return { chat: chatOut(c), messages: clone(list.slice(-150)), hasMore: list.length > 150 }; }
         if (sub === '/read') { c.unread = 0; return { ok: true }; }
         if (sub === '/unread') { c.unread = Math.max(1, c.unread || 0); emitChat(c); return { ok: true }; }
+        if (sub === '/forward') {
+          const orig = (msgs.get(id) || []).find(x => x.id === body.messageId); if (!orig) return err('Mensagem não encontrada');
+          for (const t of body.to) { const tc = chats.get(t); if (!tc) continue;
+            const msg = addMsg(t, { chat_id: t, from_me: true, kind: orig.kind, body: orig.body, file_name: orig.file_name || null, mime: orig.mime, ts: Date.now(), author_id: me.id, status: 'SERVER_ACK' });
+            if (orig._src) msg._src = orig._src; touch(tc, msg); emitChat(tc); }
+          return { results: body.to.map(t => ({ to: t, ok: true })) };
+        }
         if (!sub && method === 'PATCH') {
           const sys = [];
           const OUT = ['perdido', 'arquivado'];
