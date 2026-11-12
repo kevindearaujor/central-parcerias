@@ -593,7 +593,7 @@
     S.current = id;
     $('#inbox')?.classList.add('has-chat');
     document.querySelectorAll('.chat-item').forEach(el => el.classList.toggle('active', el.dataset.chat === id));
-    if (changed) { cancelRecording(); replyTo = null; }
+    if (changed) { cancelRecording(); replyTo = null; selIds = null; }
     const cached = msgCache.get(id);
     if (changed || !keep) {
       // abre na hora com o que já foi carregado antes; atualiza em seguida
@@ -615,6 +615,7 @@
     } catch (e) { toast(e.message, true); }
   }
   function closeChat() {
+    selIds = null;
     if (S.current) cacheMsgs(S.current);
     S.current = null; S.messages = [];
     $('#inbox')?.classList.remove('has-chat', 'show-detail');
@@ -696,6 +697,11 @@
           <span class="rec-hint">Gravando…</span>
           <button class="send-btn" id="rec-send" type="button" aria-label="Enviar áudio">${I.send}</button>
         </div>
+      </div>
+      <div class="sel-bar" id="sel-bar" hidden>
+        <button class="icon-btn" id="sel-cancel" type="button" aria-label="Cancelar seleção" title="Cancelar">${I.x}</button>
+        <span class="sel-count" id="sel-count">1 selecionada</span>
+        <button class="btn primary" id="sel-fw" type="button">${I.forward}<span>Encaminhar</span></button>
       </div>`;
     renderChatHead(); renderQueueBar(); if (!loading) renderMessages(true);
     if (!pane._swipe) { pane._swipe = true; bindSwipeBack(pane); }
@@ -777,7 +783,7 @@
       if (m._tmp && st === 'ERROR') ticks = `<button class="retry" data-retry="${esc(m.id)}">Não enviado · Tentar de novo</button>` + ticks;
     }
     const who = m.from_me ? (author ? author.name : 'Pelo celular') : '';
-    return `<div class="msg ${m.from_me ? 'out' : 'in'} ${m.deleted ? 'deleted' : ''} ${m._tmp ? 'sending' : ''}" data-mid="${esc(m.id)}">
+    return `<div class="msg ${m.from_me ? 'out' : 'in'} ${m.deleted ? 'deleted' : ''} ${m._tmp ? 'sending' : ''} ${selIds && selIds.has(m.id) ? 'sel' : ''}" data-mid="${esc(m.id)}">
       ${m._tmp ? '' : `<button class="msg-menu-btn" data-menu="${esc(m.id)}" aria-label="Opções da mensagem">${I.chevron}</button>`}
       ${m.from_me ? `<div class="author">${esc(who)}</div>` : ''}
       ${m.reply_id ? `<button class="quote in-msg ${m.reply_from_me ? 'me' : ''}" data-goto="${esc(m.reply_id)}"><b>${esc(replyWho(!!m.reply_from_me, (S.messages.find(x => x.id === m.reply_id) || {}).author_id))}</b><span>${esc(m.reply_text || '')}</span></button>` : ''}
@@ -951,6 +957,12 @@
   const EDIT_LIMIT = 15 * 60e3, DELETE_LIMIT = 48 * 3600e3;
   function bindMessageMenu(el) {
     if (el._menuBound) return; el._menuBound = true;
+    // modo seleção: tocar no balão marca/desmarca (sem abrir foto, menu etc.)
+    el.addEventListener('click', e => {
+      if (!selIds) return;
+      const bub = e.target.closest('.msg[data-mid]'); if (!bub) return;
+      e.preventDefault(); e.stopPropagation(); toggleSel(bub.dataset.mid);
+    }, true);
     el.addEventListener('click', e => {
       const rt = e.target.closest('[data-retry]'); if (rt) { e.stopPropagation(); retryTemp(rt.dataset.retry); return; }
       const b = e.target.closest('[data-menu]'); if (b) { e.stopPropagation(); openMsgMenu(b.dataset.menu, b); return; }
@@ -966,6 +978,7 @@
     el.addEventListener('touchstart', e => {
       const bub = e.target.closest('.msg[data-mid]'); if (!bub || e.target.closest('a, audio, video, button')) return;
       sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+      if (selIds) return;
       t = setTimeout(() => { t = null; if (navigator.vibrate) navigator.vibrate(15); openMsgMenu(bub.dataset.mid, bub); }, 450);
     }, { passive: true });
     el.addEventListener('touchmove', e => { if (t && (Math.abs(e.touches[0].clientX - sx) > 8 || Math.abs(e.touches[0].clientY - sy) > 8)) { clearTimeout(t); t = null; } }, { passive: true });
@@ -997,7 +1010,7 @@
       const b = e.target.closest('[data-act]'); if (!b) return; e.stopPropagation(); closeMsgMenu();
       const base = `/api/chats/${encodeURIComponent(S.current)}/messages/${encodeURIComponent(m.id)}`;
       if (b.dataset.act === 'reply') return startReply(m);
-      if (b.dataset.act === 'forward') return openForward(m);
+      if (b.dataset.act === 'forward') return startSelect(m.id);
       if (b.dataset.act === 'copy') { try { await navigator.clipboard.writeText(m.body); toast('Texto copiado'); } catch { toast('Não consegui copiar', true); } return; }
       if (b.dataset.act === 'edit') return modal(`<h3>Editar mensagem</h3>
           <div class="field"><label for="em-text">O cliente vê a mensagem com a marca "Editada".</label><textarea class="input" id="em-text" rows="5">${esc(m.body)}</textarea></div>
@@ -1192,15 +1205,54 @@
   }
 
   // ---------- modais ----------
+  // ---------- selecionar várias mensagens ----------
+  let selIds = null; const SEL_MAX = 20;
+  const selectable = (m) => m && !m._tmp && !m.deleted && !['system', 'note'].includes(m.kind);
+  function startSelect(id) {
+    selIds = new Set(); const m = S.messages.find(x => x.id === id); if (selectable(m)) selIds.add(id);
+    $('#messages')?.classList.add('selecting');
+    if ($('#composer')) $('#composer').hidden = true;
+    if ($('#sel-bar')) {
+      $('#sel-bar').hidden = false;
+      $('#sel-cancel').onclick = endSelect;
+      $('#sel-fw').onclick = () => { const list = S.messages.filter(x => selIds.has(x.id)); if (list.length) openForward(list); };
+    }
+    document.querySelectorAll('#messages .msg[data-mid]').forEach(el => el.classList.toggle('sel', selIds.has(el.dataset.mid)));
+    updateSel();
+  }
+  function toggleSel(id) {
+    const m = S.messages.find(x => x.id === id);
+    if (!selectable(m)) return toast('Essa mensagem não pode ser encaminhada', true);
+    if (selIds.has(id)) selIds.delete(id);
+    else { if (selIds.size >= SEL_MAX) return toast(`Máximo de ${SEL_MAX} mensagens por vez`, true); selIds.add(id); }
+    document.querySelector(`#messages .msg[data-mid="${CSS.escape(id)}"]`)?.classList.toggle('sel', selIds.has(id));
+    updateSel();
+  }
+  function updateSel() {
+    const n = selIds ? selIds.size : 0;
+    if ($('#sel-count')) $('#sel-count').textContent = n ? `${n} selecionada${n > 1 ? 's' : ''}` : 'Toque nas mensagens';
+    if ($('#sel-fw')) $('#sel-fw').disabled = !n;
+  }
+  function endSelect() {
+    selIds = null;
+    $('#messages')?.classList.remove('selecting');
+    document.querySelectorAll('#messages .msg.sel').forEach(el => el.classList.remove('sel'));
+    if ($('#composer')) $('#composer').hidden = false;
+    if ($('#sel-bar')) $('#sel-bar').hidden = true;
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && selIds && !document.querySelector('.modal-bg')) endSelect(); });
+
   // ---------- encaminhar ----------
-  function openForward(m) {
+  function openForward(list) {
     const from = S.current; const sel = new Set(); const MAX = 5;
+    list = [].concat(list).sort((a, b) => a.ts - b.ts);
+    const m = list[0];
     const pool = () => [...S.chats.values()]
       .filter(c => c.id !== from && (isAdmin() || c.assigned_to === S.me.id))
       .sort((a, b) => (b.last_at || b.created_at) - (a.last_at || a.created_at));
     const what = m.kind === 'text' ? esc(trunc(m.body || '', 90)) : `${m.kind === 'image' ? '📷 Foto' : m.kind === 'video' ? '🎬 Vídeo' : m.kind === 'audio' ? '🎤 Áudio' : `📎 ${esc(m.file_name || 'Arquivo')}`}${m.body ? ' · ' + esc(trunc(m.body, 60)) : ''}`;
-    modal(`<h3>Encaminhar mensagem</h3>
-      <div class="fw-preview">${what}</div>
+    modal(`<h3>Encaminhar ${list.length > 1 ? `${list.length} mensagens` : 'mensagem'}</h3>
+      <div class="fw-preview">${list.length > 1 ? `${what} <b>+ ${list.length - 1}</b>` : what}</div>
       <input class="input" id="fw-q" placeholder="Buscar conversa" autocomplete="off">
       <div class="fw-list" id="fw-list"></div>
       <div class="form-error" id="fw-err"></div>
@@ -1221,10 +1273,11 @@
       ok.onclick = async () => {
         ok.disabled = true; ok.textContent = 'Encaminhando…';
         try {
-          const r = await A.post(`/api/chats/${encodeURIComponent(from)}/forward`, { messageId: m.id, to: [...sel] });
+          const r = await A.post(`/api/chats/${encodeURIComponent(from)}/forward`, { messageIds: list.map(x => x.id), to: [...sel] });
           const bad = (r.results || []).filter(x => !x.ok);
-          close();
-          if (!bad.length) toast(sel.size > 1 ? `Encaminhada para ${sel.size} conversas` : 'Mensagem encaminhada');
+          close(); endSelect();
+          const what2 = list.length > 1 ? `${list.length} mensagens encaminhadas` : 'Mensagem encaminhada';
+          if (!bad.length) toast(sel.size > 1 ? `${what2} para ${sel.size} conversas` : what2);
           else toast(`Não encaminhou para ${bad.map(x => chatName(S.chats.get(x.to) || {})).join(', ')}: ${bad[0].error}`, true);
         } catch (err) { bg.querySelector('#fw-err').textContent = err.message; draw(); }
       };
@@ -1816,8 +1869,8 @@
         if (sub === '/read') { c.unread = 0; return { ok: true }; }
         if (sub === '/unread') { c.unread = Math.max(1, c.unread || 0); emitChat(c); return { ok: true }; }
         if (sub === '/forward') {
-          const orig = (msgs.get(id) || []).find(x => x.id === body.messageId); if (!orig) return err('Mensagem não encontrada');
-          for (const t of body.to) { const tc = chats.get(t); if (!tc) continue;
+          const list = (msgs.get(id) || []).filter(x => (body.messageIds || []).includes(x.id)); if (!list.length) return err('Mensagem não encontrada');
+          for (const t of body.to) for (const orig of list) { const tc = chats.get(t); if (!tc) continue;
             const msg = addMsg(t, { chat_id: t, from_me: true, kind: orig.kind, body: orig.body, file_name: orig.file_name || null, mime: orig.mime, ts: Date.now(), author_id: me.id, status: 'SERVER_ACK' });
             if (orig._src) msg._src = orig._src; touch(tc, msg); emitChat(tc); }
           return { results: body.to.map(t => ({ to: t, ok: true })) };

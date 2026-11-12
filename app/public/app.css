@@ -575,3 +575,18 @@ body { overscroll-behavior-y: contain; }
 .fw-name small { color: var(--muted); font-weight: 400; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fw-empty { margin: 0; padding: 18px; text-align: center; color: var(--muted); font-size: 13.5px; }
 .fw-count { margin-right: auto; align-self: center; font-size: 12.5px; color: var(--muted); }
+
+/* selecionar várias mensagens */
+.messages.selecting .msg[data-mid] { cursor: pointer; user-select: none; }
+.messages.selecting .msg-menu-btn { display: none; }
+.messages.selecting .msg.sel { box-shadow: 0 0 0 2px var(--accent); }
+.messages.selecting .msg[data-mid]::after { content: ''; position: absolute; top: 50%; width: 20px; height: 20px; margin-top: -10px; border-radius: 50%; border: 2px solid var(--faint); background: var(--surface); box-sizing: border-box; }
+.messages.selecting .msg[data-mid]::after { left: -30px; }
+.messages.selecting .msg.sel::after { background: var(--accent); border-color: var(--accent); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E"); background-size: 14px; background-position: center; background-repeat: no-repeat; }
+.messages.selecting .msg.in { margin-left: 34px; }
+.sel-bar { display: flex; align-items: center; gap: 10px; background: var(--surface); border-top: 1px solid var(--line); padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+.sel-bar[hidden] { display: none; }
+.sel-count { flex: 1; font-weight: 600; }
+.sel-bar .btn { display: inline-flex; align-items: center; gap: 6px; }
+.sel-bar .btn svg { width: 17px; height: 17px; }
+body:has(.sel-bar:not([hidden])) .demo-banner { display: none; }

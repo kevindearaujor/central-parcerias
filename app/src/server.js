@@ -247,32 +247,44 @@ route('POST', '/api/chats/:id/upload', async (req, res, { user, params, query })
 const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'video/mp4': 'mp4', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'application/pdf': 'pdf' };
 route('POST', '/api/chats/:id/forward', async (req, res, { user, params }) => {
   const chat = requireChat(user, params.id);
-  const { messageId, to } = await readBody(req);
-  const m = db.prepare('SELECT * FROM messages WHERE id = ? AND chat_id = ?').get(String(messageId || ''), chat.id);
-  if (!m || m.deleted || m.hidden || ['system', 'note'].includes(m.kind)) return fail(res, 400, 'Essa mensagem não pode ser encaminhada');
+  const { messageId, messageIds, to } = await readBody(req);
+  // várias mensagens de uma vez (até 20), sempre na ordem em que foram trocadas
+  const ids = [...new Set((Array.isArray(messageIds) ? messageIds : [messageId]).filter(Boolean).map(String))].slice(0, 20);
+  const msgs = ids.map(id => db.prepare('SELECT * FROM messages WHERE id = ? AND chat_id = ?').get(id, chat.id))
+    .filter(m => m && !m.deleted && !m.hidden && !['system', 'note'].includes(m.kind))
+    .sort((a, b) => a.ts - b.ts);
+  if (!msgs.length) return fail(res, 400, 'Essa mensagem não pode ser encaminhada');
   const targets = [...new Set((Array.isArray(to) ? to : []).map(String))].filter(t => t !== params.id).slice(0, 5);
   if (!targets.length) return fail(res, 400, 'Escolha para quem encaminhar');
-  let file = null;
-  if (m.kind !== 'text') { file = await ensureMedia(m); if (!file) return fail(res, 404, 'Esse arquivo não está mais disponível para encaminhar'); }
+  const files = new Map();
+  for (const m of msgs) if (m.kind !== 'text') {
+    const f = await ensureMedia(m);
+    if (!f) return fail(res, 404, `O arquivo ${m.file_name ? `"${m.file_name}" ` : ''}não está mais disponível para encaminhar`);
+    files.set(m.id, f);
+  }
   const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
   const baseUrl = host && host.includes('.') ? `https://${host}` : null;
-  const mime = (m.mime || 'application/octet-stream').split(';')[0];
-  const fileName = m.file_name || `${m.kind === 'image' ? 'imagem' : m.kind === 'video' ? 'video' : m.kind === 'audio' ? 'audio' : 'arquivo'}.${EXT[mime] || mime.split('/')[1] || 'bin'}`;
   const results = [];
   for (const t of targets) {
+    let sent = 0;
     try {
       const tc = requireChat(user, t);
       // corretor só encaminha para os leads dele
       if (user.role !== 'admin' && tc.assigned_to !== user.id) throw new Error('Essa conversa não é sua');
-      if (m.kind === 'text') await core.sendText(user, tc, m.body);
-      else {
-        const tmp = path.join(core.MEDIA_DIR, `fw_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`);
-        fs.copyFileSync(file, tmp);
-        try { await core.sendFile(user, tc, { file: tmp, size: fs.statSync(tmp).size, mime, fileName, caption: m.body || '', baseUrl }); }
-        catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
+      for (const m of msgs) {
+        if (m.kind === 'text') await core.sendText(user, core.getChat(tc.id), m.body);
+        else {
+          const mime = (m.mime || 'application/octet-stream').split(';')[0];
+          const fileName = m.file_name || `${m.kind === 'image' ? 'imagem' : m.kind === 'video' ? 'video' : m.kind === 'audio' ? 'audio' : 'arquivo'}.${EXT[mime] || mime.split('/')[1] || 'bin'}`;
+          const tmp = path.join(core.MEDIA_DIR, `fw_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`);
+          fs.copyFileSync(files.get(m.id), tmp);
+          try { await core.sendFile(user, core.getChat(tc.id), { file: tmp, size: fs.statSync(tmp).size, mime, fileName, caption: m.body || '', baseUrl }); }
+          catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
+        }
+        sent++;
       }
-      results.push({ to: t, ok: true });
-    } catch (e) { results.push({ to: t, ok: false, error: e.message }); }
+      results.push({ to: t, ok: true, sent });
+    } catch (e) { results.push({ to: t, ok: false, sent, error: e.message }); }
   }
   send(res, 200, { results });
 });
