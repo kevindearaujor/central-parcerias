@@ -829,7 +829,9 @@
   function retryTemp(tmp) {
     const id = S.current; const t = (temps.get(id) || []).find(x => x.id === tmp); if (!t) return;
     dropTemp(id, tmp);
-    if (t.kind === 'text') queueText(id, t.body, t._replyTo); else queueFile(id, t._file, t.body);
+    if (t.kind === 'text') queueText(id, t.body, t._replyTo);
+    else if (t._qr) queueQuickFile(id, t._qr, t._idx, t.body);
+    else queueFile(id, t._file, t.body);
   }
   let sendChain = Promise.resolve();
   function queueText(chatId, text, replyId) {
@@ -851,6 +853,19 @@
       const el = document.querySelector(`[data-up="${tmp}"]`); if (el) el.textContent = p < 100 ? `${p}%` : 'Enviando ao WhatsApp…';
       const bar = document.querySelector(`[data-upbar="${tmp}"]`); if (bar) bar.style.width = `${p}%`;
     }).then(r => resolveTemp(chatId, tmp, r.message)).catch(e => failTemp(chatId, tmp, e));
+  }
+  // resposta rápida com mídia: 1 arquivo leva o texto como legenda; vários = texto primeiro e depois os arquivos
+  function queueQuick(chatId, qr, text) {
+    const media = qr.media || [];
+    if (media.length > 1 && text) queueText(chatId, text);
+    media.forEach((m, i) => queueQuickFile(chatId, qr, i, media.length === 1 ? text : ''));
+  }
+  function queueQuickFile(chatId, qr, idx, caption) {
+    const m = qr.media[idx]; if (!m) return;
+    const tmp = 'tmp_' + Math.random().toString(36).slice(2);
+    addTemp(chatId, { id: tmp, chat_id: chatId, from_me: true, kind: 'document', body: caption || '', file_name: m.name, ts: Date.now(), status: 'SENDING', author_id: S.me.id, _tmp: true, _up: 100, _qr: qr, _idx: idx });
+    sendChain = sendChain.then(() => A.post(`/api/chats/${encodeURIComponent(chatId)}/send-quick`, { qrId: qr.id, idx, caption: caption || '' })
+      .then(r => resolveTemp(chatId, tmp, r.message)).catch(e => failTemp(chatId, tmp, e)));
   }
   // atualiza só o balão que mudou (sem redesenhar a conversa inteira)
   function patchMsg(m) {
@@ -897,12 +912,13 @@
     renderMessages(false); el.scrollTop = el.scrollHeight - h;
   }
 
-  let pendingFile = null;
+  let pendingFile = null; let pendingQr = null;
   function bindComposer() {
+    pendingQr = null;
     const ta = $('#compose'); const pop = $('#qr-pop'); let sel = 0; let items = [];
     const autosize = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 140) + 'px'; toggleMic(); };
     // microfone no lugar do enviar quando a caixa está vazia (igual ao WhatsApp)
-    const toggleMic = () => { const empty = !ta.value.trim() && !pendingFile; $('#send-btn').hidden = empty; $('#mic-btn').hidden = !empty; };
+    const toggleMic = () => { const empty = !ta.value.trim() && !pendingFile && !pendingQr; $('#send-btn').hidden = empty; $('#mic-btn').hidden = !empty; };
     bindRecorder(toggleMic);
     const draftKey = 'draft:' + S.current;
     ta.value = store.get(draftKey, ''); autosize();
@@ -913,10 +929,23 @@
       items = S.quickReplies.filter(r => r.shortcut.toLowerCase().includes(term) || r.text.toLowerCase().includes(term));
       if (!items.length) { pop.hidden = true; return; }
       sel = Math.min(sel, items.length - 1);
-      pop.innerHTML = items.map((r, i) => `<button type="button" data-i="${i}" class="${i === sel ? 'sel' : ''}"><b>/${esc(r.shortcut)}</b><span>${esc(trunc(r.text, 90))}</span></button>`).join('');
+      pop.innerHTML = items.map((r, i) => `<button type="button" data-i="${i}" class="${i === sel ? 'sel' : ''}"><b>/${esc(r.shortcut)}</b><span>${(r.media || []).length ? `${I.clip}` : ''}${esc(trunc(r.text || (r.media || []).map(m => m.name).join(' · '), 90))}</span></button>`).join('');
       pop.hidden = false;
     };
-    const pick = (i) => { const r = items[i]; if (!r) return; ta.value = r.text; pop.hidden = true; autosize(); ta.focus(); };
+    const pick = (i) => {
+      const r = items[i]; if (!r) return;
+      ta.value = r.text || ''; pop.hidden = true;
+      if ((r.media || []).length) setQuickMedia(r); else clearQuickMedia();
+      autosize(); ta.focus();
+    };
+    // resposta rápida com mídia: mostra os arquivos acima da caixa; o texto vira a legenda
+    const setQuickMedia = (r) => {
+      pendingFile = null; pendingQr = r;
+      const ap = $('#attach-preview'); ap.hidden = false;
+      ap.innerHTML = `${I.clip}<span>${r.media.map(m => esc(m.name)).join(' · ')}${r.media.length > 1 ? ` <b>(${r.media.length} arquivos)</b>` : ''}</span><button class="icon-btn" id="rm-file" aria-label="Remover mídia">${I.x}</button>`;
+      $('#rm-file').onclick = () => { clearQuickMedia(); toggleMic(); };
+    };
+    const clearQuickMedia = () => { if (!pendingQr) return; pendingQr = null; $('#attach-preview').hidden = true; };
     pop.onmousedown = e => { const b = e.target.closest('[data-i]'); if (b) { e.preventDefault(); pick(Number(b.dataset.i)); } };
     ta.addEventListener('input', () => { autosize(); showQr(); store.set(draftKey, ta.value); });
     ta.addEventListener('keydown', e => {
@@ -934,7 +963,7 @@
       const f = e.target.files[0]; e.target.value = '';
       if (!f) return;
       if (f.size > 100 * 1024 * 1024) return toast('Arquivo acima de 100 MB. Compacte ou divida antes de enviar.', true);
-      pendingFile = f;
+      pendingFile = f; pendingQr = null;
       const mb = (f.size / 1048576).toFixed(1).replace('.', ',');
       const big = f.size > 16 * 1024 * 1024 && /^(image|video|audio)\//.test(f.type);
       const ap = $('#attach-preview'); ap.hidden = false;
@@ -946,7 +975,8 @@
       const text = ta.value.trim(); const id = S.current;
       if (!text && !pendingFile) return;
       // o balão aparece na hora; o envio continua por trás
-      if (pendingFile) { queueFile(id, pendingFile, text); pendingFile = null; $('#attach-preview').hidden = true; }
+      if (pendingQr) { queueQuick(id, pendingQr, text); pendingQr = null; $('#attach-preview').hidden = true; clearReply(); }
+      else if (pendingFile) { queueFile(id, pendingFile, text); pendingFile = null; $('#attach-preview').hidden = true; }
       else { queueText(id, text, replyTo); clearReply(); }
       ta.value = ''; store.set(draftKey, ''); autosize(); pop.hidden = true; toggleMic();
       ta.focus();
@@ -1553,8 +1583,8 @@
         <form class="inline-form" id="user-form"><input class="input" id="u-name" placeholder="Nome" required><input class="input" id="u-email" type="text" placeholder="Usuário (ex: ana.paula)" autocapitalize="none" autocorrect="off" spellcheck="false" required><input class="input" id="u-pass" type="text" placeholder="Senha inicial" required minlength="6"><select class="input" id="u-role" style="flex:0 0 130px"><option value="corretor">Corretor</option><option value="admin">Administrador</option></select><button class="btn primary" type="submit">${I.plus}Adicionar</button></form></section>
       <section class="panel"><h2>Etiquetas</h2><div class="row-list" id="tags-list"></div>
         <form class="inline-form" id="tag-form"><input class="input" id="t-name" placeholder="Nova etiqueta" required><input type="color" class="input" id="t-color" value="#2F6FFF" aria-label="Cor"><button class="btn primary" type="submit">${I.plus}Adicionar</button></form></section>
-      <section class="panel"><h2>Respostas rápidas</h2><p>Na conversa, digite / e o atalho para inserir o texto.</p><div class="row-list" id="qr-list"></div>
-        <form class="inline-form qr-form" id="qr-form"><input class="input" id="q-short" placeholder="atalho" required><textarea class="input" id="q-text" rows="4" placeholder="Texto da resposta. Aperte Enter para pular linha." required></textarea><button class="btn primary" type="submit">${I.plus}Adicionar</button></form></section>` : ''}
+      <section class="panel"><h2>Respostas rápidas</h2><p>Na conversa, digite / e o atalho para inserir o texto. Pode anexar até 5 mídias (book, tabela, fotos) em cada resposta.</p><div class="row-list" id="qr-list"></div>
+        <form class="inline-form qr-form" id="qr-form"><input class="input" id="q-short" placeholder="atalho" required><textarea class="input" id="q-text" rows="4" placeholder="Texto da resposta (ou legenda da mídia). Aperte Enter para pular linha."></textarea><div class="qr-files" id="q-files"></div><div class="qr-form-actions"><label class="btn"><input type="file" id="q-file" multiple hidden>${I.clip}Adicionar mídia</label><button class="btn primary" type="submit">${I.plus}Adicionar</button></div></form></section>` : ''}
       <section class="panel"><h2>Como o lead me vê</h2><p>Foto e nome que o cliente vê no WhatsApp.</p><div id="wa-profile"><div class="sys" style="display:inline-block">Carregando…</div></div></section>
       <section class="panel"><h2>App e avisos no celular</h2><p>Instale a Central como app e receba um aviso sempre que chegar lead para você.</p><div class="app-box" id="app-box"></div></section>
       <section class="panel"><h2>Minha conta</h2><p>${esc(S.me.name)} · ${esc(S.me.email)}</p>
@@ -1613,19 +1643,61 @@
       <div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="lo-ok" style="background:var(--danger);border-color:var(--danger);color:#fff">Desconectar</button></div>`,
       (bg, close) => bg.querySelector('#lo-ok').onclick = async () => { try { S.waFull = await A.post('/api/wa/logout'); close(); renderWaBox(); renderWaWarn(); } catch (e) { toast(e.message, true); } });
   }
+  const QR_MAX = 5;
+  const fmtSize = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1).replace('.', ',')} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+  const fileChip = (name, size, attr, isNew) => `<span class="qr-file ${isNew ? 'new' : ''}">${I.doc}<span>${esc(name)}<small>${size ? fmtSize(size) : ''}${isNew ? ' · novo' : ''}</small></span><button type="button" class="icon-btn" ${attr} aria-label="Remover ${esc(name)}">${I.x}</button></span>`;
+  function addQrFiles(list, files, already) {
+    for (const f of files) {
+      if (f.size > 100 * 1024 * 1024) { toast(`${f.name} passa de 100 MB`, true); continue; }
+      if (already + list.length >= QR_MAX) { toast(`Máximo de ${QR_MAX} arquivos por resposta`, true); break; }
+      list.push(f);
+    }
+    return list;
+  }
+  function uploadQrMedia(id, file) {
+    if (DEMO) return A.post(`/api/quick-replies/${id}/media`, { name: file.name, mime: file.type, size: file.size });
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      x.open('POST', `/api/quick-replies/${id}/media?name=${encodeURIComponent(file.name)}`);
+      x.setRequestHeader('X-Requested-With', 'plataforma');
+      x.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch {} x.status < 300 ? resolve(d) : reject(new Error(d.error || `Não consegui enviar ${file.name}`)); };
+      x.onerror = () => reject(new Error('Falha de conexão no envio'));
+      x.send(file);
+    });
+  }
   function editQuickReply(r) {
     if (!r) return;
     modal(`<h3>Editar resposta rápida</h3>
       <div class="field"><label for="eq-short">Atalho</label><input class="input" id="eq-short" value="${esc(r.shortcut)}" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
       <div class="field"><label for="eq-text">Texto da resposta</label><textarea class="input" id="eq-text" rows="8">${esc(r.text)}</textarea></div>
+      <div class="field"><label>Mídias (até ${QR_MAX} arquivos)</label><div class="qr-files" id="eq-files"></div>
+        <label class="btn qr-add"><input type="file" id="eq-file" multiple hidden>${I.clip}Adicionar mídia</label></div>
       <div class="form-error" id="eq-err"></div>
       <div class="modal-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="eq-ok">Salvar</button></div>`,
-    (bg, close) => bg.querySelector('#eq-ok').onclick = async () => {
-      const shortcut = bg.querySelector('#eq-short').value.trim().replace(/^\//, '');
-      const text = bg.querySelector('#eq-text').value;
-      if (!shortcut || !text.trim()) { bg.querySelector('#eq-err').textContent = 'Preencha o atalho e o texto'; return; }
-      try { await A.patch(`/api/quick-replies/${r.id}`, { shortcut, text }); close(); await reloadBootstrap(); renderConfig(); toast('Resposta salva'); }
-      catch (err) { bg.querySelector('#eq-err').textContent = err.message; }
+    (bg, close) => {
+      const media = [...(r.media || [])]; const removed = []; let added = [];
+      const draw = () => { bg.querySelector('#eq-files').innerHTML = media.map((m, i) => fileChip(m.name, m.size, `data-rmold="${i}"`)).join('') + added.map((f, i) => fileChip(f.name, f.size, `data-rmnew="${i}"`, true)).join(''); };
+      draw();
+      bg.querySelector('#eq-file').onchange = e => { added = addQrFiles(added, [...e.target.files], media.length); e.target.value = ''; draw(); };
+      bg.querySelector('#eq-files').onclick = e => {
+        const o = e.target.closest('[data-rmold]'); if (o) { const i = Number(o.dataset.rmold); removed.push((r.media || []).indexOf(media[i])); media.splice(i, 1); draw(); }
+        const n = e.target.closest('[data-rmnew]'); if (n) { added.splice(Number(n.dataset.rmnew), 1); draw(); }
+      };
+      bg.querySelector('#eq-ok').onclick = async () => {
+        const shortcut = bg.querySelector('#eq-short').value.trim().replace(/^\//, '');
+        const text = bg.querySelector('#eq-text').value;
+        if (!shortcut) { bg.querySelector('#eq-err').textContent = 'Preencha o atalho'; return; }
+        if (!text.trim() && !media.length && !added.length) { bg.querySelector('#eq-err').textContent = 'Escreva o texto ou deixe ao menos uma mídia'; return; }
+        const ok = bg.querySelector('#eq-ok'); ok.disabled = true;
+        try {
+          await A.patch(`/api/quick-replies/${r.id}`, { shortcut, text });
+          // remove do fim para o começo para não bagunçar as posições
+          for (const i of removed.sort((a, b) => b - a)) await A.del(`/api/quick-replies/${r.id}/media/${i}`);
+          for (let i = 0; i < added.length; i++) { ok.textContent = `Enviando mídia ${i + 1} de ${added.length}…`; await uploadQrMedia(r.id, added[i]); }
+          close(); await reloadBootstrap(); renderConfig(); toast('Resposta salva');
+        } catch (err) { bg.querySelector('#eq-err').textContent = err.message; ok.disabled = false; ok.textContent = 'Salvar'; }
+      };
     });
   }
   function editUserModal(u) {
@@ -1692,12 +1764,27 @@
     $('#tags-list').innerHTML = S.tags.map(t => `<div class="row-item"><span class="chip"><span class="sw" style="background:${esc(t.color)}"></span>${esc(t.name)}</span><span class="grow"></span><button class="icon-btn" data-deltag="${t.id}" aria-label="Excluir etiqueta">${I.trash}</button></div>`).join('');
     $('#tags-list').onclick = async e => { const b = e.target.closest('[data-deltag]'); if (b) { await A.del(`/api/tags/${b.dataset.deltag}`); await reloadBootstrap(); renderConfig(); } };
     $('#tag-form').onsubmit = async e => { e.preventDefault(); await A.post('/api/tags', { name: $('#t-name').value, color: $('#t-color').value }); await reloadBootstrap(); renderConfig(); };
-    $('#qr-list').innerHTML = S.quickReplies.map(r => `<div class="row-item"><div class="grow"><strong class="num">/${esc(r.shortcut)}</strong><small>${esc(r.text)}</small></div><button class="icon-btn" data-editqr="${r.id}" aria-label="Editar resposta" title="Editar">${I.edit}</button><button class="icon-btn" data-delqr="${r.id}" aria-label="Excluir resposta" title="Excluir">${I.trash}</button></div>`).join('');
+    $('#qr-list').innerHTML = S.quickReplies.map(r => `<div class="row-item"><div class="grow"><strong class="num">/${esc(r.shortcut)}</strong>${r.text ? `<small>${esc(r.text)}</small>` : ''}${(r.media || []).length ? `<span class="qr-media-chip">${I.clip}${r.media.map(m => esc(m.name)).join(' · ')}</span>` : ''}</div><button class="icon-btn" data-editqr="${r.id}" aria-label="Editar resposta" title="Editar">${I.edit}</button><button class="icon-btn" data-delqr="${r.id}" aria-label="Excluir resposta" title="Excluir">${I.trash}</button></div>`).join('');
     $('#qr-list').onclick = async e => {
       const ed = e.target.closest('[data-editqr]'); if (ed) return editQuickReply(S.quickReplies.find(r => r.id === Number(ed.dataset.editqr)));
       const b = e.target.closest('[data-delqr]'); if (b) { await A.del(`/api/quick-replies/${b.dataset.delqr}`); await reloadBootstrap(); renderConfig(); }
     };
-    $('#qr-form').onsubmit = async e => { e.preventDefault(); await A.post('/api/quick-replies', { shortcut: $('#q-short').value.replace(/^\//, ''), text: $('#q-text').value }); await reloadBootstrap(); renderConfig(); };
+    let newFiles = [];
+    const drawNew = () => { $('#q-files').innerHTML = newFiles.map((f, i) => fileChip(f.name, f.size, `data-rmnew="${i}"`)).join(''); };
+    $('#q-file').onchange = e => { newFiles = addQrFiles(newFiles, [...e.target.files], 0); e.target.value = ''; drawNew(); };
+    $('#q-files').onclick = e => { const b = e.target.closest('[data-rmnew]'); if (b) { newFiles.splice(Number(b.dataset.rmnew), 1); drawNew(); } };
+    $('#qr-form').onsubmit = async e => {
+      e.preventDefault();
+      const shortcut = $('#q-short').value.trim().replace(/^\//, ''); const text = $('#q-text').value;
+      if (!shortcut) return toast('Preencha o atalho', true);
+      if (!text.trim() && !newFiles.length) return toast('Escreva o texto ou adicione uma mídia', true);
+      const btn = e.submitter || $('#qr-form [type=submit]'); btn.disabled = true;
+      try {
+        const r = await A.post('/api/quick-replies', { shortcut, text });
+        for (let i = 0; i < newFiles.length; i++) { btn.textContent = `Enviando mídia ${i + 1} de ${newFiles.length}…`; await uploadQrMedia(r.item.id, newFiles[i]); }
+        await reloadBootstrap(); renderConfig(); toast('Resposta rápida criada');
+      } catch (err) { toast(err.message, true); btn.disabled = false; btn.innerHTML = `${I.plus}Adicionar`; }
+    };
   }
 
   // ================= modo demonstração =================
@@ -1719,6 +1806,7 @@
       { id: 1, shortcut: 'oi', text: 'Olá! Tudo bem? Aqui é da equipe de parcerias Cury. Vi que você se interessou pelo nosso anúncio. Qual empreendimento chamou sua atenção?' },
       { id: 2, shortcut: 'renda', text: 'Para eu te passar as melhores condições, me conta: qual a sua renda familiar aproximada e se você tem FGTS disponível?' },
       { id: 3, shortcut: 'visita', text: 'Que tal conhecer o decorado pessoalmente? Tenho horários disponíveis esta semana. Qual dia fica melhor para você?' },
+      { id: 4, shortcut: 'book', text: 'Segue o book do Lyne Santo Amaro com plantas e condições. Qualquer dúvida me chama!', media: [{ name: 'Book Lyne Santo Amaro.pdf', mime: 'application/pdf', size: 8650000 }] },
     ];
     const stages = [{ id: 'tratativa', name: 'Tratativa' }, { id: 'agendamento', name: 'Agendamento' }, { id: 'documento', name: 'Captar documento' }, { id: 'aprovado', name: 'Aprovado' }, { id: 'comprou', name: 'Comprou' }];
     const outStages = [{ id: 'perdido', name: 'Perdido' }, { id: 'arquivado', name: 'Arquivado' }];
@@ -1854,7 +1942,7 @@
       const u = new URL(url, 'http://x'); const path = u.pathname; const key = `${method} ${path}`;
       if (routes[key]) return routes[key](body || {}, u.searchParams);
       let m;
-      if ((m = path.match(/^\/api\/chats\/([^/]+)(\/\w+)?$/))) {
+      if ((m = path.match(/^\/api\/chats\/([^/]+)(\/[\w-]+)?$/))) {
         const id = decodeURIComponent(m[1]); const sub = m[2];
         if (id === 'new' && method === 'POST') {
           let d = String(body.phone || '').replace(/\D/g, ''); if (d.length <= 11) d = '55' + d; if (d.length < 12) return err('Número inválido. Use DDD + número.');
@@ -1867,6 +1955,11 @@
         if (!sub && method === 'PATCH' && body.assigned_to !== undefined && me.role !== 'admin' && c.assigned_to != null && c.assigned_to !== me.id) return err('Sem permissão');
         if (!sub && method === 'GET') { const arr = msgs.get(id) || []; const before = Number(u.searchParams.get('before')) || Infinity; const list = arr.filter(x => x.ts < before); return { chat: chatOut(c), messages: clone(list.slice(-150)), hasMore: list.length > 150 }; }
         if (sub === '/read') { c.unread = 0; return { ok: true }; }
+        if (sub === '/send-quick') {
+          const r = qrs.find(t => t.id === Number(body.qrId)); const f = r?.media?.[body.idx]; if (!f) return err('Arquivo não encontrado');
+          const msg = addMsg(id, { chat_id: id, from_me: true, kind: (f.mime || '').startsWith('image/') ? 'image' : 'document', body: body.caption || '', file_name: f.name, mime: f.mime, ts: Date.now(), author_id: me.id, status: 'SERVER_ACK' });
+          touch(c, msg); emitChat(c); emitMsg(id, msg); return { message: clone(msg) };
+        }
         if (sub === '/unread') { c.unread = Math.max(1, c.unread || 0); emitChat(c); return { ok: true }; }
         if (sub === '/forward') {
           const list = (msgs.get(id) || []).filter(x => (body.messageIds || []).includes(x.id)); if (!list.length) return err('Mensagem não encontrada');
@@ -1927,7 +2020,13 @@
       }
       if (path.startsWith('/api/users')) { if (method === 'POST') { const nu = { id: users.length + 1, name: body.name, email: body.username || body.email, role: body.role, active: true }; users.push(nu); if (nu.role === 'corretor') queue.order.push(nu.id); return { user: nu }; } const uid = Number(path.split('/').pop()); const usr = users.find(x => x.id === uid); if (usr && body.active !== undefined) usr.active = body.active; if (usr && body.name) usr.name = body.name; if (usr && body.username) { if (users.some(x => x.id !== uid && x.email === body.username)) return err('Esse usuário já existe. Escolha outro.'); usr.email = body.username; } if (usr && body.role) usr.role = body.role; return { ok: true }; }
       if (path.startsWith('/api/tags')) { if (method === 'POST') tags.push({ id: tags.length + 10, name: body.name, color: body.color }); if (method === 'DELETE') { const i = tags.findIndex(t => t.id === Number(path.split('/').pop())); if (i >= 0) tags.splice(i, 1); } return { ok: true }; }
-      if (path.startsWith('/api/quick-replies')) { if (method === 'POST') qrs.push({ id: qrs.length + 10, shortcut: body.shortcut, text: body.text }); if (method === 'DELETE') { const i = qrs.findIndex(t => t.id === Number(path.split('/').pop())); if (i >= 0) qrs.splice(i, 1); } return { ok: true }; }
+      if (path.startsWith('/api/quick-replies')) {
+        const qm = path.match(/^\/api\/quick-replies\/(\d+)\/media(?:\/(\d+))?$/);
+        if (qm) { const r = qrs.find(t => t.id === Number(qm[1])); if (!r) return err('Não encontrada'); r.media = r.media || [];
+          if (method === 'POST') r.media.push({ name: body.name, mime: body.mime, size: body.size }); else r.media.splice(Number(qm[2]), 1);
+          return { item: clone(r) }; }
+        if (method === 'PATCH') { const r = qrs.find(t => t.id === Number(path.split('/').pop())); if (r) Object.assign(r, { shortcut: body.shortcut, text: body.text }); return { ok: true }; }
+        if (method === 'POST') { const it = { id: qrs.length + 10, shortcut: body.shortcut, text: body.text, media: [] }; qrs.push(it); return { item: clone(it) }; } if (method === 'DELETE') { const i = qrs.findIndex(t => t.id === Number(path.split('/').pop())); if (i >= 0) qrs.splice(i, 1); } return { ok: true }; }
       if (path === '/api/logout' || path === '/api/login') return { ok: true };
       return err('Indisponível na demonstração');
     }

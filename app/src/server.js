@@ -150,7 +150,7 @@ route('GET', '/api/bootstrap', async (req, res, { user }) => {
     me: publicUser(user),
     users: db.prepare('SELECT * FROM users ORDER BY name').all().map(publicUser),
     tags: db.prepare('SELECT * FROM tags ORDER BY id').all(),
-    quickReplies: db.prepare('SELECT * FROM quick_replies ORDER BY shortcut').all(),
+    quickReplies: db.prepare('SELECT * FROM quick_replies ORDER BY shortcut').all().map(presentQr),
     stages: STAGES,
     outStages: OUT_STAGES,
     settings: { auto_distribute: getSetting('auto_distribute') === '1' },
@@ -477,11 +477,11 @@ route('PATCH', '/api/users/:id', async (req, res, { user, params }) => {
 });
 
 // ---- etiquetas e respostas rápidas ----
-function crud(table, fields, label) {
+function crud(table, fields, label, required = fields) {
   route('POST', `/api/${table.replace('_', '-')}`, async (req, res, { user }) => {
     adminOnly(user);
     const b = await readBody(req);
-    if (fields.some(f => !String(b[f] || '').trim())) return fail(res, 400, `Preencha ${label}`);
+    if (required.some(f => !String(b[f] || '').trim())) return fail(res, 400, `Preencha ${label}`);
     const r = db.prepare(`INSERT INTO ${table}(${fields.join(', ')}) VALUES(${fields.map(() => '?').join(', ')})`).run(...fields.map(f => String(b[f]).trim()));
     core.pushAll('config_changed', {});
     send(res, 200, { item: db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(r.lastInsertRowid) });
@@ -496,13 +496,67 @@ function crud(table, fields, label) {
   });
   route('DELETE', `/api/${table.replace('_', '-')}/:id`, async (req, res, { user, params }) => {
     adminOnly(user);
+    if (table === 'quick_replies') qrMedia(db.prepare('SELECT * FROM quick_replies WHERE id = ?').get(Number(params.id))).forEach(m => { try { fs.unlinkSync(path.join(QR_DIR, m.f)); } catch {} });
     db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(Number(params.id));
     core.pushAll('config_changed', {});
     send(res, 200, { ok: true });
   });
 }
 crud('tags', ['name', 'color'], 'nome e cor');
-crud('quick_replies', ['shortcut', 'text'], 'atalho e texto');
+crud('quick_replies', ['shortcut', 'text'], 'o atalho', ['shortcut']);
+
+// ----- mídias das respostas rápidas (book, tabela, fotos...) -----
+const QR_DIR = path.join(DATA_DIR, 'qr-media');
+fs.mkdirSync(QR_DIR, { recursive: true });
+const QR_MAX_FILES = 5;
+function qrMedia(r) { try { return JSON.parse(r?.media || '[]'); } catch { return []; } }
+function presentQr(r) { return { ...r, media: qrMedia(r).map(m => ({ name: m.name, mime: m.mime, size: m.size })) }; }
+route('POST', '/api/quick-replies/:id/media', async (req, res, { user, params, query }) => {
+  adminOnly(user);
+  const r = db.prepare('SELECT * FROM quick_replies WHERE id = ?').get(Number(params.id));
+  if (!r) return fail(res, 404, 'Resposta rápida não encontrada');
+  const list = qrMedia(r);
+  if (list.length >= QR_MAX_FILES) return fail(res, 400, `Máximo de ${QR_MAX_FILES} arquivos por resposta`);
+  if (Number(req.headers['content-length'] || 0) > MAX_UPLOAD) return fail(res, 413, 'Arquivo acima de 100 MB');
+  const f = `${r.id}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+  const dest = path.join(QR_DIR, f);
+  const size = await new Promise((resolve, reject) => {
+    let n = 0; const out = fs.createWriteStream(dest);
+    req.on('data', c => { n += c.length; if (n > MAX_UPLOAD) { req.destroy(); out.destroy(); reject(Object.assign(new Error('Arquivo acima de 100 MB'), { status: 413 })); } });
+    req.pipe(out); out.on('finish', () => resolve(n)); out.on('error', reject); req.on('error', reject);
+  }).catch(e => { try { fs.unlinkSync(dest); } catch {} throw e; });
+  if (!size) { try { fs.unlinkSync(dest); } catch {} return fail(res, 400, 'Arquivo vazio'); }
+  list.push({ f, name: String(query.get('name') || 'arquivo').slice(0, 200), mime: String(req.headers['content-type'] || 'application/octet-stream').split(';')[0], size });
+  db.prepare('UPDATE quick_replies SET media = ? WHERE id = ?').run(JSON.stringify(list), r.id);
+  core.pushAll('config_changed', {});
+  send(res, 200, { item: presentQr(db.prepare('SELECT * FROM quick_replies WHERE id = ?').get(r.id)) });
+});
+route('DELETE', '/api/quick-replies/:id/media/:idx', async (req, res, { user, params }) => {
+  adminOnly(user);
+  const r = db.prepare('SELECT * FROM quick_replies WHERE id = ?').get(Number(params.id));
+  if (!r) return fail(res, 404, 'Resposta rápida não encontrada');
+  const list = qrMedia(r); const [gone] = list.splice(Number(params.idx), 1);
+  if (gone) { try { fs.unlinkSync(path.join(QR_DIR, gone.f)); } catch {} }
+  db.prepare('UPDATE quick_replies SET media = ? WHERE id = ?').run(JSON.stringify(list), r.id);
+  core.pushAll('config_changed', {});
+  send(res, 200, { ok: true });
+});
+// envia um dos arquivos da resposta rápida na conversa
+route('POST', '/api/chats/:id/send-quick', async (req, res, { user, params }) => {
+  const chat = requireChat(user, params.id);
+  const { qrId, idx, caption } = await readBody(req);
+  const r = db.prepare('SELECT * FROM quick_replies WHERE id = ?').get(Number(qrId));
+  const m = qrMedia(r)[Number(idx) || 0];
+  if (!m || !fs.existsSync(path.join(QR_DIR, m.f))) return fail(res, 404, 'Esse arquivo não está mais na resposta rápida');
+  const tmp = path.join(core.MEDIA_DIR, `qr_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`);
+  fs.copyFileSync(path.join(QR_DIR, m.f), tmp);
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const baseUrl = host && host.includes('.') ? `https://${host}` : null;
+  try {
+    const msg = await core.sendFile(user, chat, { file: tmp, size: m.size, mime: m.mime, fileName: m.name, caption: String(caption || '').slice(0, 1000), baseUrl });
+    send(res, 200, { message: core.presentMsg(msg) });
+  } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
+});
 
 route('PATCH', '/api/settings', async (req, res, { user }) => {
   adminOnly(user);
