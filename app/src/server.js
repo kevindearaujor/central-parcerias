@@ -577,6 +577,8 @@ route('PATCH', '/api/queue', async (req, res, { user }) => {
     b.order.map(Number).filter(Boolean).forEach((id, i) => up.run(i + 1, id));
   }
   if (b.member && b.member.id) db.prepare('UPDATE users SET queue_on = ? WHERE id = ?').run(b.member.on ? 1 : 0, Number(b.member.id));
+  // o administrador escolhe quem recebe o próximo lead; depois o rodízio segue dali
+  if (b.next) { try { core.setNextBroker(Number(b.next)); } catch (e) { return fail(res, 400, e.message); } }
   if (b.reassignOn !== undefined) setSetting('reassign_on', b.reassignOn ? '1' : '0');
   if (b.reassignMin !== undefined) setSetting('reassign_min', String(Math.min(Math.max(Number(b.reassignMin) || 5, 1), 120)));
   const hhmm = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || '')) ? String(v) : null;

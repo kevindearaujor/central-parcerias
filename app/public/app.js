@@ -1416,6 +1416,7 @@
           <span class="q-pos num">${i + 1}º</span>
           <div class="avatar sm" style="background:${colorFor('u' + m.id)}">${esc(initials(m.name))}</div>
           <div class="grow"><strong>${esc(m.name)}</strong>${st.auto && st.nextId === m.id ? '<span class="pill admin">Próximo a receber</span>' : ''}${m.on ? '' : '<span class="pill">Pausado</span>'}</div>
+          ${st.auto && m.on && st.nextId !== m.id ? `<button class="btn sm q-next" data-next="${m.id}" title="O próximo lead vai para ${esc(m.name)}">Definir como próximo</button>` : ''}
           <label class="switch" title="${m.on ? 'Recebe leads' : 'Não recebe leads'}"><input type="checkbox" data-toggle="${m.id}" ${m.on ? 'checked' : ''} aria-label="${esc(m.name)} recebe leads"><span class="q-lbl">${m.on ? 'Recebe' : 'Pausado'}</span></label>
         </li>`).join('')}</ol>
         <p class="q-foot">${onCount} de ${st.members.length} corretores recebendo leads.${!onCount && st.auto ? ' Com todos pausados, os leads ficam em Não lidas.' : ''}</p>`
@@ -1430,6 +1431,10 @@
     }
     $('#q-re').onchange = async e => { try { renderQueuePanel(await A.patch('/api/queue', { reassignOn: e.target.checked })); } catch (err) { toast(err.message, true); } };
     $('#q-min').onchange = async e => { try { renderQueuePanel(await A.patch('/api/queue', { reassignMin: Number(e.target.value) })); toast(`Repasse em ${e.target.value} min sem resposta`); } catch (err) { toast(err.message, true); } };
+    el.querySelectorAll('[data-next]').forEach(b => b.onclick = async () => {
+      try { const r = await A.patch('/api/queue', { next: Number(b.dataset.next) }); renderQueuePanel(r); const m = r.members.find(x => x.id === r.nextId); toast(`Próximo lead vai para ${m ? m.name : 'o corretor escolhido'}`); }
+      catch (err) { toast(err.message, true); }
+    });
     el.querySelectorAll('[data-toggle]').forEach(t => t.onchange = async () => {
       try { renderQueuePanel(await A.patch('/api/queue', { member: { id: Number(t.dataset.toggle), on: t.checked } })); } catch (err) { toast(err.message, true); }
     });
@@ -1918,6 +1923,7 @@
         if (b.member) { if (b.member.on) queue.paused.delete(b.member.id); else queue.paused.add(b.member.id); }
         if (b.reassignOn !== undefined) queue.reOn = !!b.reassignOn;
         if (b.reassignMin !== undefined) queue.reMin = Number(b.reassignMin);
+        if (b.next) { const i = queue.order.indexOf(Number(b.next)); queue.last = queue.order[(i - 1 + queue.order.length) % queue.order.length]; }
         if (b.holdOn !== undefined) queue.hold.on = !!b.holdOn;
         if (b.holdStart) queue.hold.start = b.holdStart;
         if (b.holdEnd) queue.hold.end = b.holdEnd;

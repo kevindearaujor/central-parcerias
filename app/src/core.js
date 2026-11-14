@@ -140,6 +140,15 @@ function peekNextBroker() {
   }
   return on[0];
 }
+function setNextBroker(id) {
+  const all = q.queueMembers.all();
+  const i = all.findIndex(u => u.id === id);
+  if (i < 0) throw new Error('Corretor não está na fila');
+  if (!all[i].queue_on) throw new Error('Esse corretor está pausado. Ative ele na fila primeiro.');
+  // o rodízio continua a partir de quem vem antes dele na ordem
+  setSetting('rr_last', String(all[(i - 1 + all.length) % all.length].id));
+  setImmediate(broadcastQueuePos);
+}
 function nextBroker() {
   const b = peekNextBroker();
   if (b) { setSetting('rr_last', String(b.id)); setImmediate(broadcastQueuePos); }
@@ -865,6 +874,6 @@ module.exports = {
   deleteUser,
   addClient, removeClient, canSee, present, presentMsg, pushChat, pushAll, setWaState, getWaState,
   sendVoice, mediaFile, sendFile, editMessage, deleteMessage, takeTemp, MEDIA_DIR,
-  getChat, getChatByRef, handleWebhook, releaseHeld, holdActive, myQueue, broadcastQueuePos, markUnread, refreshAvatar, avatarFile, queueState, reassignOverdue, sendText, sendMedia, addNote, updateChat, findOrCreateChat,
+  getChat, getChatByRef, handleWebhook, releaseHeld, holdActive, setNextBroker, myQueue, broadcastQueuePos, markUnread, refreshAvatar, avatarFile, queueState, reassignOverdue, sendText, sendMedia, addNote, updateChat, findOrCreateChat,
   extractContent, resolveJid, toMs,
 };

@@ -612,3 +612,6 @@ body:has(.sel-bar:not([hidden])) .demo-banner { display: none; }
 .qr-form .qr-files, .qr-form .qr-form-actions { grid-column: 2; }
 @media (max-width: 760px) { .qr-form .qr-files, .qr-form .qr-form-actions { grid-column: 1; } }
 .field label.qr-add { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--fg); font-weight: 600; }
+
+.q-next { white-space: nowrap; }
+@media (max-width: 700px) { .q-next { font-size: 12px; padding: 5px 8px; } }
