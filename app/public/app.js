@@ -1064,13 +1064,22 @@
   // ---------- teclado do celular: a tela encolhe em vez de ser empurrada ----------
   (function keepAppInView() {
     const vv = window.visualViewport; if (!vv) return;
+    const typing = () => { const el = document.activeElement; return !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'file', 'range', 'button', 'submit'].includes(el.type))); };
     const fit = () => {
-      document.documentElement.style.setProperty('--app-h', `${Math.round(vv.height)}px`);
+      // só encolhe a tela enquanto o teclado está aberto; fora disso usa a tela inteira.
+      // (o iPhone às vezes não avisa que o teclado fechou e a tela ficava cortada no meio)
+      const full = window.innerHeight;
+      if (typing() && vv.height < full - 80) document.documentElement.style.setProperty('--app-h', `${Math.round(vv.height)}px`);
+      else document.documentElement.style.removeProperty('--app-h');
       if (window.scrollY || document.documentElement.scrollTop) window.scrollTo(0, 0);
       const msgs = document.getElementById('messages');
       if (msgs && document.activeElement && document.activeElement.id === 'compose') msgs.scrollTop = msgs.scrollHeight;
     };
+    const later = () => { fit(); setTimeout(fit, 120); setTimeout(fit, 400); };
     vv.addEventListener('resize', fit); vv.addEventListener('scroll', () => { if (window.scrollY) window.scrollTo(0, 0); });
+    document.addEventListener('focusin', later); document.addEventListener('focusout', later);
+    window.addEventListener('pageshow', later); window.addEventListener('orientationchange', later); window.addEventListener('resize', later);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') later(); });
     fit();
   })();
 
@@ -1415,8 +1424,7 @@
           <button class="q-grip" aria-label="Arrastar ${esc(m.name)}" title="Arraste para mudar a posição">${I.grip}</button>
           <span class="q-pos num">${i + 1}º</span>
           <div class="avatar sm" style="background:${colorFor('u' + m.id)}">${esc(initials(m.name))}</div>
-          <div class="grow"><strong>${esc(m.name)}</strong>${st.auto && st.nextId === m.id ? '<span class="pill admin">Próximo a receber</span>' : ''}${m.on ? '' : '<span class="pill">Pausado</span>'}</div>
-          ${st.auto && m.on && st.nextId !== m.id ? `<button class="btn sm q-next" data-next="${m.id}" title="O próximo lead vai para ${esc(m.name)}">Definir como próximo</button>` : ''}
+          <div class="grow"><strong>${esc(m.name)}</strong>${st.auto && st.nextId === m.id ? '<span class="pill admin"><span class="q-full">Próximo a receber</span><span class="q-short">Próximo</span></span>' : ''}${m.on ? '' : '<span class="pill">Pausado</span>'}${st.auto && m.on && st.nextId !== m.id ? `<button class="btn sm q-next" data-next="${m.id}" title="O próximo lead vai para ${esc(m.name)}" aria-label="Definir ${esc(m.name)} como próximo"><span class="q-full">Definir como próximo</span><span class="q-short">Definir como próximo</span></button>` : ''}</div>
           <label class="switch" title="${m.on ? 'Recebe leads' : 'Não recebe leads'}"><input type="checkbox" data-toggle="${m.id}" ${m.on ? 'checked' : ''} aria-label="${esc(m.name)} recebe leads"><span class="q-lbl">${m.on ? 'Recebe' : 'Pausado'}</span></label>
         </li>`).join('')}</ol>
         <p class="q-foot">${onCount} de ${st.members.length} corretores recebendo leads.${!onCount && st.auto ? ' Com todos pausados, os leads ficam em Não lidas.' : ''}</p>`
