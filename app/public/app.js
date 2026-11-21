@@ -223,17 +223,32 @@
     return true;
   }
   let audioCtx;
-  function beep() {
-    if (!store.get('sound', true)) return;
-    try {
-      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
-      o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.0001;
-      o.connect(g); g.connect(audioCtx.destination); o.start();
-      g.gain.exponentialRampToValueAtTime(0.12, audioCtx.currentTime + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.25);
-      o.stop(audioCtx.currentTime + 0.3);
-    } catch {}
+  // toque de notificação: sino agudo (som em /som/sino.mp3)
+  let hornBuf = null, hornLoading = null, lastHorn = 0;
+  function audio() { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); return audioCtx; }
+  function loadHorn() {
+    if (hornBuf || hornLoading) return hornLoading;
+    hornLoading = fetch(window.HORN_DEMO || '/som/sino.mp3').then(r => r.arrayBuffer())
+      .then(b => new Promise((ok, no) => audio().decodeAudioData(b, ok, no)))
+      .then(buf => { hornBuf = buf; }).catch(() => { hornLoading = null; });
+    return hornLoading;
+  }
+  // o celular só libera som depois de um toque na tela: destrava no primeiro toque
+  ['pointerdown', 'keydown', 'touchend'].forEach(ev => document.addEventListener(ev, function unlock() {
+    try { const ctx = audio(); if (ctx.state === 'suspended') ctx.resume(); const b = ctx.createBuffer(1, 1, 22050); const s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(0); loadHorn(); } catch {}
+    ['pointerdown', 'keydown', 'touchend'].forEach(e => document.removeEventListener(e, unlock, true));
+  }, true));
+  function playHorn() {
+    const ctx = audio(); if (ctx.state === 'suspended') ctx.resume();
+    if (!hornBuf) { loadHorn()?.then(() => hornBuf && playHorn()); return; }
+    const src = ctx.createBufferSource(); const g = ctx.createGain();
+    src.buffer = hornBuf; g.gain.value = 1; src.connect(g); g.connect(ctx.destination); src.start(0);
+  }
+  function beep(force) {
+    if (!force && !store.get('sound', true)) return;
+    // várias mensagens seguidas: toca no máximo uma vez a cada 6 segundos
+    const now = Date.now(); if (!force && now - lastHorn < 6000) return; lastHorn = now;
+    try { playHorn(); } catch {}
   }
   function updateTitle() {
     let n = 0; for (const c of S.chats.values()) if (c.unread > 0 && !isOut(c)) n++;
@@ -1602,7 +1617,7 @@
       <section class="panel"><h2>App e avisos no celular</h2><p>Instale a Central como app e receba um aviso sempre que chegar lead para você.</p><div class="app-box" id="app-box"></div></section>
       <section class="panel"><h2>Minha conta</h2><p>${esc(S.me.name)} · ${esc(S.me.email)}</p>
         <div style="display:grid;gap:12px">
-          <label class="switch"><input type="checkbox" id="snd" ${store.get('sound', true) ? 'checked' : ''}><span>Som ao chegar mensagem</span></label>
+          <div class="snd-row"><label class="switch"><input type="checkbox" id="snd" ${store.get('sound', true) ? 'checked' : ''}><span>Som de sino ao chegar mensagem (com o Quero Leads aberto)</span></label><button class="btn sm" id="snd-test" type="button">${I.bell || ''}Testar som</button></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <select class="input" id="theme-sel" style="width:auto"><option value="dark">Tema escuro (padrão)</option><option value="light">Tema claro</option></select>
           </div>
@@ -1613,6 +1628,7 @@
     if (admin) { renderWaBox(); refreshWa(); bindAdminConfig(); }
     loadProfile();
     $('#snd').onchange = e => store.set('sound', e.target.checked);
+    $('#snd-test').onclick = () => beep(true);
     $('#theme-sel').value = store.get('theme', 'dark') === 'light' ? 'light' : 'dark';
     $('#theme-sel').onchange = e => { store.set('theme', e.target.value); applyTheme(); };
     renderAppBox();

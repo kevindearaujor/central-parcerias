@@ -648,3 +648,5 @@ body:has(.sel-bar:not([hidden])) .demo-banner { display: none; }
   .q-item .grow .q-next { margin-left: 0; }
   .q-item .grow .pill { align-self: flex-start; }
 }
+
+.snd-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
